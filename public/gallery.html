@@ -195,21 +195,10 @@
   // se heurte aux règles CORS et échouait silencieusement (d'où l'alerte
   // d'erreur). /blob fait transiter les octets par notre propre serveur :
   // le fetch() reste sur notre domaine, plus aucun souci CORS.
-  async function saveMedia(id, type, titre){
-    var ext = type === "video" ? "mp4" : "jpg";
-    var filename = "okim-art-" + (titre || type).replace(/[^a-z0-9]+/gi, "-") + "." + ext;
-    try {
-      var res = await fetch(blobUrl(id));
-      if (!res.ok) throw new Error("Le fichier n'a pas pu être récupéré (code " + res.status + ").");
-      var blob = await res.blob();
-      var file = new File([blob], filename, { type: blob.type || (type === "video" ? "video/mp4" : "image/jpeg") });
-
-      // 1) Partage natif (iOS/Android récents) : propose "Enregistrer
-      // l'image/la vidéo" directement dans le menu de partage du système.
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file] });
-        return;
-      }
+  function saveMedia(id, type, titre) {
+// Redirection directe vers la route backend qui gère le téléchargement sans blocage JS
+window.location.href = "/api/download/" + token;
+}
 
       // 2) Repli : téléchargement classique via un lien temporaire (fonctionne
       // bien sur ordinateur et sur la plupart des navigateurs Android).
