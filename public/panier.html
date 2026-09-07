@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panier — OKIM ART</title>
+<link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#141a30">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/shop.css">
+<link rel="stylesheet" href="css/software.css">
+<script src="https://cdn.kkiapay.me/k.js"></script>
+<link rel="stylesheet" href="css/okimbox.css">
+</head>
+<body>
+
+<header class="nav scrolled" id="nav">
+  <a href="index.html" class="brand"><img src="img/brand/logo.png" alt="OKIM ART" class="brand-logo" id="brand-logo-img"> OKIM ART</a>
+  <nav class="nav-links">
+    <a href="boutique.html">Boutique</a>
+    <a href="index.html#contact">Contact</a>
+  </nav>
+  <div class="nav-right">
+    <a href="compte.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Espace client</a>
+  </div>
+</header>
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow" style="justify-content:center"><span></span>Panier</p>
+    <h1>Votre sélection</h1>
+  </div>
+</section>
+
+<section class="page-section">
+  <div class="wrap">
+    <div id="cart-list" class="cart-list"></div>
+    <p id="cart-empty" class="cart-empty" style="display:none">Votre panier est vide. <a href="boutique.html" style="color:var(--indigo); text-decoration:underline">Voir la boutique</a></p>
+    <div id="cart-total-wrap" class="cart-total" style="display:none">
+      <span>Total</span><span id="cart-total-amount">0 FCFA</span>
+    </div>
+
+    <div id="checkout-wrap" class="form-card" style="max-width:520px; margin:0 auto; display:none">
+      <div class="form-error" id="checkout-error"></div>
+      <form id="checkout-form">
+        <div class="field"><label>Nom complet</label><input type="text" id="co-nom" required></div>
+        <div class="field"><label>E-mail</label><input type="email" id="co-email" required></div>
+        <div class="field"><label>Téléphone (WhatsApp de préférence)</label><input type="text" id="co-telephone"></div>
+        <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center">Continuer</button>
+      </form>
+    </div>
+
+    <!-- Étape 2 : paiement, affichée une fois la commande créée -->
+    <div id="payment-wrap" class="form-card" style="max-width:520px; margin:0 auto; display:none">
+      <p style="font-family:var(--mono); font-size:.8rem; color:var(--ink-soft); margin:0 0 1rem">
+        Commande <strong id="pay-numero"></strong> — <span id="pay-montant"></span>
+      </p>
+
+      <div id="pay-kkiapay-block" style="display:none">
+        <button type="button" class="btn btn-primary" id="pay-kkiapay-btn" style="width:100%; justify-content:center">
+          Payer par Mobile Money / carte (KKiaPay)
+        </button>
+        <p class="form-note">Paiement sécurisé via KKiaPay — MTN Mobile Money, Moov Money ou carte bancaire. Vos photos sont débloquées et téléchargeables automatiquement dès la confirmation du paiement, sans intervention manuelle.</p>
+      </div>
+
+      <!-- Repli affiché UNIQUEMENT si KKiaPay n'est pas configuré : ce
+           parcours n'est pas vérifié automatiquement, donc pas de
+           déblocage automatique du téléchargement. -->
+      <div id="pay-manual-block" style="display:none">
+        <p class="form-note">Le paiement en ligne automatique n'est pas encore activé sur ce site. Contactez OKIM ART directement pour finaliser votre paiement (Mobile Money, espèces, virement) ; le téléchargement sera débloqué manuellement après vérification.</p>
+        <a href="#" id="pay-manual-link" class="btn btn-ghost" style="width:100%; justify-content:center">Enregistrer ma commande sans payer en ligne</a>
+      </div>
+
+      <div class="form-success" id="pay-verifying" style="display:none">Vérification du paiement en cours…</div>
+      <div class="form-error" id="pay-error" style="display:none"></div>
+
+      <div id="pay-success" style="display:none">
+        <div class="form-success show">Paiement confirmé ! Vos photos sont prêtes :</div>
+        <div id="pay-downloads" style="margin:1rem 0"></div>
+        <p class="form-note">Un e-mail avec ces liens vient également de vous être envoyé. Retrouvez-les à tout moment dans votre <a href="compte.html" style="color:var(--indigo)">espace client</a>.</p>
+      </div>
+
+      <div class="form-success" id="pay-manual-confirm" style="display:none">Commande enregistrée. OKIM ART confirmera votre paiement puis débloquera le téléchargement — vous serez averti par e-mail.</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span class="f-brand"><img src="img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
+  <div class="f-socials"><a href="index.html#contact">Contact</a></div>
+</footer>
+
+<script src="js/cart.js"></script>
+<script>
+(function(){
+  var FCFA = new Intl.NumberFormat("fr-FR");
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+  function render(){
+    var items = OkimCart.read();
+    var list = document.getElementById("cart-list");
+    if(!items.length){
+      document.getElementById("cart-empty").style.display = "block";
+      document.getElementById("cart-total-wrap").style.display = "none";
+      document.getElementById("checkout-wrap").style.display = "none";
+      list.innerHTML = "";
+      return;
+    }
+    document.getElementById("cart-empty").style.display = "none";
+    document.getElementById("cart-total-wrap").style.display = "flex";
+    document.getElementById("checkout-wrap").style.display = "block";
+    list.innerHTML = items.map(function(i){
+      return '<div class="cart-row">' +
+        '<img src="'+esc(i.img)+'" alt="">' +
+        '<div class="info"><h4>'+esc(i.titre)+'</h4><span>'+FCFA.format(i.prix)+' FCFA × '+i.quantite+'</span></div>' +
+        '<button class="remove" data-remove="'+i.id+'">Retirer</button>' +
+      '</div>';
+    }).join("");
+    document.getElementById("cart-total-amount").textContent = FCFA.format(OkimCart.total()) + " FCFA";
+    list.querySelectorAll("[data-remove]").forEach(function(b){
+      b.addEventListener("click", function(){ OkimCart.remove(b.dataset.remove); render(); });
+    });
+  }
+  render();
+
+  document.getElementById("checkout-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("checkout-error");
+    err.classList.remove("show");
+    var items = OkimCart.read().map(function(i){
+      return { product_id: i.product_id !== undefined ? i.product_id : i.id, plan_id: i.plan_id || undefined, quantite: i.quantite };
+    });
+    var body = {
+      items: items,
+      client: {
+        nom: document.getElementById("co-nom").value,
+        email: document.getElementById("co-email").value,
+        telephone: document.getElementById("co-telephone").value
+      }
+    };
+    fetch("/api/orders", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if(res.status !== 201){ throw new Error(res.data.error || "Échec de la commande."); }
+        startPaymentStep(res.data.order);
+      })
+      .catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
+  });
+
+  function startPaymentStep(order){
+    document.getElementById("checkout-wrap").style.display = "none";
+    document.getElementById("payment-wrap").style.display = "block";
+    document.getElementById("pay-numero").textContent = order.numero;
+    document.getElementById("pay-montant").textContent = FCFA.format(order.montant) + " FCFA";
+
+    fetch("/api/settings").then(function(r){ return r.json(); }).then(function(data){
+      var s = data.settings || {};
+      var kkiapayReady = s.kkiapay_enabled === "1" && s.kkiapay_public_key && window.openKkiapayWidget;
+
+      if(kkiapayReady){
+        // Paiement automatique disponible : c'est la SEULE option proposée
+        // (traçabilité garantie par la vérification serveur du webhook —
+        // pas de confirmation manuelle qui reposerait sur la confiance).
+        document.getElementById("pay-kkiapay-block").style.display = "block";
+        document.getElementById("pay-kkiapay-btn").addEventListener("click", function(){
+          window.openKkiapayWidget({
+            amount: order.montant,
+            key: s.kkiapay_public_key,
+            sandbox: s.kkiapay_sandbox !== "0",
+            data: order.numero,
+            position: "center"
+          });
+        });
+        if(window.addSuccessListener){
+          window.addSuccessListener(function(response){
+            confirmKkiapayPayment(order.id, response && response.transactionId, 0);
+          });
+        }
+      } else {
+        // KKiaPay pas encore configuré côté admin : seule option restante,
+        // clairement présentée comme non automatique.
+        document.getElementById("pay-manual-block").style.display = "block";
+        document.getElementById("pay-manual-link").addEventListener("click", function(e){
+          e.preventDefault();
+          OkimCart.clear();
+          document.getElementById("pay-manual-block").style.display = "none";
+          document.getElementById("pay-manual-confirm").classList.add("show");
+        });
+      }
+    }).catch(function(){
+      document.getElementById("pay-manual-block").style.display = "block";
+    });
+  }
+
+  function confirmKkiapayPayment(orderId, transactionId, attempt){
+    if(!transactionId) return;
+    document.getElementById("pay-kkiapay-block").style.display = "none";
+    document.getElementById("pay-verifying").classList.add("show");
+    document.getElementById("pay-error").classList.remove("show");
+
+    fetch("/api/orders/" + orderId + "/kkiapay-confirm", {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ transactionId: transactionId })
+    }).then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if(res.status === 200 && res.data.ok){
+          document.getElementById("pay-verifying").classList.remove("show");
+          var list = document.getElementById("pay-downloads");
+          var tokens = res.data.download_tokens || [];
+          var licenses = res.data.licenses || [];
+          var html = tokens.map(function(t){
+            return '<a class="btn btn-primary" href="/api/download/'+encodeURIComponent(t.token)+'" style="width:100%; justify-content:center; margin-bottom:.6rem" download>Télécharger — '+esc(t.titre)+'</a>';
+          }).join("");
+          if (licenses.length) {
+            html += licenses.map(function(l){
+              return '<div class="sw-license-card"><div class="row"><span>Clé de licence</span></div>' +
+                '<div class="sw-license-key">'+esc(l.license_key)+'</div></div>';
+            }).join("") +
+            '<a class="btn btn-ghost" href="compte.html" style="width:100%; justify-content:center; margin-top:.6rem">Voir mes logiciels dans mon espace client</a>';
+          }
+          list.innerHTML = html;
+          document.getElementById("pay-success").style.display = "block";
+          OkimCart.clear();
+        } else if(res.status === 202 && attempt < 8){
+          // Le webhook KKiaPay n'est peut-être pas encore arrivé : on réessaie.
+          setTimeout(function(){ confirmKkiapayPayment(orderId, transactionId, attempt + 1); }, 3000);
+        } else {
+          document.getElementById("pay-verifying").classList.remove("show");
+          var err = document.getElementById("pay-error");
+          err.textContent = res.data.error || "Vérification impossible pour le moment. Votre paiement reste enregistré : un e-mail de confirmation vous parviendra dès que la vérification aboutit.";
+          err.classList.add("show");
+        }
+      })
+      .catch(function(){
+        document.getElementById("pay-verifying").classList.remove("show");
+        var err = document.getElementById("pay-error");
+        err.textContent = "Erreur réseau pendant la vérification. Consultez votre espace client dans quelques instants.";
+        err.classList.add("show");
+      });
+  }
+})();
+</script>
+<script src="js/okimbox.js"></script>
+</body>
+</html>

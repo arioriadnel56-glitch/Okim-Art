@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Espace client — OKIM ART</title>
+<link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#141a30">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/shop.css">
+<link rel="stylesheet" href="css/software.css">
+<link rel="stylesheet" href="css/okimbox.css">
+</head>
+<body>
+
+<header class="nav scrolled" id="nav">
+  <a href="index.html" class="brand"><img src="img/brand/logo.png" alt="OKIM ART" class="brand-logo" id="brand-logo-img"> OKIM ART</a>
+  <nav class="nav-links">
+    <a href="boutique.html">Boutique</a>
+    <a href="logiciels.html">Outils &amp; Logiciels</a>
+    <a href="index.html#contact">Contact</a>
+  </nav>
+  <div class="nav-right">
+    <a href="panier.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Panier</a>
+  </div>
+</header>
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow" style="justify-content:center"><span></span>Espace client</p>
+    <h1 id="page-title">Vos commandes &amp; téléchargements</h1>
+  </div>
+</section>
+
+<section class="page-section">
+  <div class="wrap">
+
+    <!-- ===== NON CONNECTÉ ===== -->
+    <div id="auth-view">
+      <div class="account-tabs">
+        <button class="active" id="tab-login">Connexion</button>
+        <button id="tab-register">Créer un compte</button>
+      </div>
+
+      <div class="form-card" style="margin:0 auto" id="login-card">
+        <div class="form-error" id="login-error"></div>
+        <form id="login-form">
+          <div class="field"><label>E-mail</label><input type="email" id="li-email" required></div>
+          <div class="field"><label>Mot de passe</label><input type="password" id="li-password" required></div>
+          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center">Se connecter</button>
+        </form>
+        <p style="text-align:center; margin-top:1rem; font-size:.85rem">
+          <a href="#" id="forgot-link" style="color:var(--indigo); text-decoration:underline">Mot de passe oublié ?</a>
+        </p>
+      </div>
+
+      <div class="form-card" style="margin:0 auto; display:none" id="forgot-card">
+        <div class="form-error" id="forgot-error"></div>
+        <div class="form-success" id="forgot-success"></div>
+        <p style="color:var(--ink-soft); font-size:.88rem; margin-top:0">Indiquez l'e-mail de votre compte : si un compte existe, un lien de réinitialisation vous sera envoyé.</p>
+        <form id="forgot-form">
+          <div class="field"><label>E-mail</label><input type="email" id="fp-email" required></div>
+          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center">Envoyer le lien</button>
+        </form>
+        <p style="text-align:center; margin-top:1rem; font-size:.85rem">
+          <a href="#" id="back-to-login-link" style="color:var(--indigo); text-decoration:underline">Retour à la connexion</a>
+        </p>
+      </div>
+
+      <div class="form-card" style="margin:0 auto; display:none" id="register-card">
+        <div class="form-error" id="register-error"></div>
+        <form id="register-form">
+          <div class="field"><label>Nom complet</label><input type="text" id="re-nom" required></div>
+          <div class="field"><label>E-mail</label><input type="email" id="re-email" required></div>
+          <div class="field"><label>Téléphone</label><input type="text" id="re-telephone"></div>
+          <div class="field"><label>Mot de passe (8 caractères min.)</label><input type="password" id="re-password" minlength="8" required></div>
+
+          <div class="field">
+            <label>Licence d'utilisation</label>
+            <div id="licence-box" tabindex="0" style="max-height:160px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:.9rem 1rem; font-size:.82rem; line-height:1.55; color:var(--ink-soft); background:var(--paper-soft)">
+              <p><strong>1. Compte client.</strong> Les informations fournies (nom, e-mail, téléphone) servent uniquement à la gestion de vos commandes, licences et à la communication liée à votre activité avec OKIM ART. Elles ne sont ni vendues ni transmises à des tiers.</p>
+              <p><strong>2. Usage des fichiers achetés.</strong> Les photos, vidéos et logiciels achetés sur cette plateforme sont concédés pour un usage personnel ou professionnel tel que décrit sur la fiche produit au moment de l'achat. Toute revente, redistribution ou réutilisation commerciale non autorisée du fichier original est interdite, sauf accord écrit du studio.</p>
+              <p><strong>3. Paiement.</strong> Les paiements sont traités via KKiaPay (Mobile Money / carte bancaire). Toute contestation de paiement doit être adressée directement à OKIM ART.</p>
+              <p><strong>4. Compte et suppression.</strong> Vous pouvez à tout moment demander la suppression définitive de votre compte depuis votre espace client. Vos commandes passées restent conservées de façon anonymisée à des fins comptables, comme la loi l'exige.</p>
+              <p><strong>5. Responsabilité.</strong> OKIM ART s'efforce d'assurer la disponibilité de la plateforme mais ne garantit pas un service ininterrompu.</p>
+            </div>
+            <label style="display:flex; align-items:flex-start; gap:.6rem; margin-top:.7rem; font-size:.85rem; font-weight:400; cursor:pointer">
+              <input type="checkbox" id="re-licence" required style="margin-top:.2rem; width:auto">
+              <span>J'ai lu et j'accepte la <a href="/licence.html" target="_blank" rel="noopener" style="color:var(--indigo); text-decoration:underline">licence d'utilisation</a> d'OKIM ART.</span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center" id="register-submit" disabled>Créer mon compte</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ===== CONNECTÉ ===== -->
+    <div id="account-view" style="display:none">
+      <div style="text-align:center; margin-bottom:2rem; position:relative">
+        <div class="cl-notif-wrap">
+          <button class="cl-bell" id="cl-notif-bell" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            <span class="cl-bell-badge" id="cl-notif-badge" style="display:none">0</span>
+          </button>
+          <div class="cl-notif-panel" id="cl-notif-panel">
+            <div class="cl-notif-panel-head">
+              <span>Notifications</span>
+              <button type="button" id="cl-notif-read-all">Tout marquer comme lu</button>
+            </div>
+            <div class="cl-notif-list" id="cl-notif-list"></div>
+          </div>
+        </div>
+        <p style="color:var(--ink-soft)">Connecté en tant que <strong id="who"></strong></p>
+        <button class="btn btn-ghost" id="logout-btn">Se déconnecter</button>
+      </div>
+
+      <div class="account-tabs">
+        <button class="active" id="tab-orders">Mes commandes</button>
+        <button id="tab-software">Mes logiciels</button>
+        <button id="tab-testimonial">Mon témoignage</button>
+        <button id="tab-account">Mon compte</button>
+      </div>
+
+      <div id="orders-view">
+        <div id="orders-list"></div>
+        <p id="orders-empty" class="cart-empty" style="display:none">Vous n'avez pas encore de commande. <a href="boutique.html" style="color:var(--indigo); text-decoration:underline">Découvrir la boutique</a></p>
+      </div>
+
+      <div id="software-view" style="display:none">
+        <div id="software-list"></div>
+        <p id="software-empty" class="cart-empty" style="display:none">Vous n'avez pas encore de logiciel. <a href="logiciels.html" style="color:var(--indigo); text-decoration:underline">Découvrir les outils & logiciels</a></p>
+      </div>
+
+      <div id="testimonial-view" style="display:none">
+        <div class="form-card" style="margin:0 auto; max-width:560px">
+          <p style="color:var(--ink-soft); font-size:.88rem; margin-top:0">Partagez votre expérience avec OKIM ART — elle pourra être affichée sur le site après validation par l'équipe.</p>
+          <span id="testimonial-statut" class="te-status-tag" style="display:none"></span>
+          <div class="form-error" id="testimonial-error"></div>
+          <div class="form-success" id="testimonial-success"></div>
+          <form id="testimonial-form">
+            <div class="field">
+              <label>Votre nom (affiché publiquement)</label>
+              <input type="text" id="te-nom">
+            </div>
+            <div class="field">
+              <label>Note</label>
+              <div id="te-stars" class="te-stars" role="radiogroup" aria-label="Note sur 5">
+                <button type="button" data-v="1" aria-label="1 étoile">★</button>
+                <button type="button" data-v="2" aria-label="2 étoiles">★</button>
+                <button type="button" data-v="3" aria-label="3 étoiles">★</button>
+                <button type="button" data-v="4" aria-label="4 étoiles">★</button>
+                <button type="button" data-v="5" aria-label="5 étoiles">★</button>
+              </div>
+              <input type="hidden" id="te-note" value="5">
+            </div>
+            <div class="field"><label>Votre témoignage</label><textarea id="te-texte" rows="5" required placeholder="Racontez votre expérience avec OKIM ART…"></textarea></div>
+            <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center">Enregistrer mon témoignage</button>
+          </form>
+          <button class="btn btn-ghost" id="testimonial-delete" style="width:100%; justify-content:center; margin-top:.7rem; display:none">Supprimer mon témoignage</button>
+        </div>
+      </div>
+
+      <div id="account-tab-view" style="display:none">
+        <div class="form-card" style="margin:0 auto; max-width:560px">
+          <h3 style="margin-top:0; font-family:var(--display); font-size:1.1rem; color:var(--indigo-deep)">Informations du compte</h3>
+          <p style="color:var(--ink-soft); font-size:.9rem"><strong>Nom :</strong> <span id="acc-nom"></span><br><strong>E-mail :</strong> <span id="acc-email"></span></p>
+
+          <div style="border-top:1px solid var(--line); margin:1.6rem 0 1.2rem"></div>
+
+          <h3 style="font-family:var(--display); font-size:1.05rem; color:#a33; margin-bottom:.4rem">Zone dangereuse</h3>
+          <p style="color:var(--ink-soft); font-size:.85rem; margin-top:0">
+            Supprimer votre compte est <strong>définitif et irréversible</strong>. Vous perdrez immédiatement l'accès à vos téléchargements, licences et à votre historique de commandes depuis cet espace. Vos commandes restent conservées de façon anonymisée par OKIM ART à des fins comptables.
+          </p>
+          <button type="button" class="btn btn-ghost" id="delete-account-btn" style="border-color:#c33; color:#c33">Supprimer définitivement mon compte</button>
+
+          <div id="delete-account-confirm" style="display:none; margin-top:1rem; padding-top:1rem; border-top:1px solid var(--line)">
+            <div class="form-error" id="delete-account-error"></div>
+            <div class="field"><label>Confirmez avec votre mot de passe</label><input type="password" id="delete-account-password"></div>
+            <div style="display:flex; gap:.8rem">
+              <button type="button" class="btn btn-primary" id="delete-account-cancel" style="flex:1; justify-content:center">Annuler</button>
+              <button type="button" class="btn" id="delete-account-confirm-btn" style="flex:1; justify-content:center; background:#c33; color:#fff; border-color:#c33">Confirmer la suppression</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      .cl-notif-wrap{ position:absolute; top:0; right:0; }
+      .cl-bell{
+        all:unset; cursor:pointer; position:relative;
+        width:38px; height:38px; display:flex; align-items:center; justify-content:center;
+        border:1px solid var(--line); border-radius:50%; color:var(--ink-soft); background:var(--white);
+        transition:border-color .2s, color .2s, background .2s;
+      }
+      .cl-bell:hover{ border-color:var(--indigo); color:var(--indigo); background:var(--paper-soft); }
+      .cl-bell svg{ width:18px; height:18px; }
+      .cl-bell-badge{
+        position:absolute; top:-4px; right:-4px; min-width:17px; height:17px; padding:0 4px;
+        border-radius:100px; background:var(--brass); color:var(--white);
+        font-family:var(--mono); font-size:.62rem; font-weight:600;
+        display:flex; align-items:center; justify-content:center;
+      }
+      .cl-notif-panel{
+        position:absolute; top:calc(100% + .6rem); right:0; width:320px; max-height:400px; overflow-y:auto;
+        background:var(--white); border:1px solid var(--line); border-radius:var(--radius-sm);
+        box-shadow:0 20px 44px -20px rgba(20,26,48,.35);
+        display:none; z-index:20; text-align:left;
+      }
+      .cl-notif-panel.open{ display:block; }
+      .cl-notif-panel-head{
+        display:flex; justify-content:space-between; align-items:center; padding:.9rem 1.1rem;
+        border-bottom:1px solid var(--line); font-family:var(--mono); font-size:.68rem;
+        letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft);
+        position:sticky; top:0; background:var(--white);
+      }
+      .cl-notif-panel-head button{ all:unset; cursor:pointer; color:var(--indigo); font-size:.68rem; text-transform:none; letter-spacing:0; }
+      .cl-notif-panel-head button:hover{ text-decoration:underline; }
+      .cl-notif-item{ display:block; width:100%; text-align:left; padding:.8rem 1.1rem; border-bottom:1px solid var(--line); background:none; cursor:default; }
+      .cl-notif-item:last-child{ border-bottom:none; }
+      .cl-notif-item.unread{ background:rgba(177,141,84,.07); }
+      .cl-notif-item .ni-title{ font-size:.85rem; font-weight:500; color:var(--ink); margin-bottom:.15rem; }
+      .cl-notif-item .ni-body{ font-size:.78rem; color:var(--ink-soft); }
+      .cl-notif-item .ni-time{ font-family:var(--mono); font-size:.63rem; color:var(--ink-soft); margin-top:.3rem; display:block; }
+      .cl-notif-empty{ padding:2rem 1.2rem; text-align:center; color:var(--ink-soft); font-size:.85rem; }
+
+      .te-stars{ display:flex; gap:.3rem; }
+      .te-stars button{ all:unset; cursor:pointer; font-size:1.5rem; color:var(--line); transition:color .15s, transform .15s; }
+      .te-stars button:hover{ transform:scale(1.12); }
+      .te-stars button.on{ color:var(--brass); }
+      .te-status-tag{
+        display:inline-block; font-family:var(--mono); font-size:.66rem; letter-spacing:.04em; text-transform:uppercase;
+        padding:.28rem .65rem; border-radius:100px; margin-bottom:1rem;
+        background:var(--paper-soft); color:var(--ink-soft); border:1px solid var(--line);
+      }
+      .te-status-tag.publie{ background:#eaf6ec; color:#1f5c2b; border-color:#bfe3c6; }
+      .te-status-tag.en_attente{ background:#fdf3e2; color:#8a5a13; border-color:#f0dcae; }
+      .te-status-tag.rejete{ background:#fdecea; color:#8a2c22; border-color:#f3c4bd; }
+    </style>
+
+  </div>
+</section>
+
+<footer>
+  <span class="f-brand"><img src="img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
+  <div class="f-socials"><a href="index.html#contact">Contact</a></div>
+</footer>
+
+<script>
+(function(){
+  var FCFA = new Intl.NumberFormat("fr-FR");
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  var STATUT_LABEL = { en_attente:"En attente de paiement", payee:"Payée", echouee:"Échouée", annulee:"Annulée", livree:"Livrée" };
+
+  function showAccount(client){
+    document.getElementById("auth-view").style.display = "none";
+    document.getElementById("account-view").style.display = "block";
+    document.getElementById("who").textContent = client.nom + " (" + client.email + ")";
+    document.getElementById("acc-nom").textContent = client.nom;
+    document.getElementById("acc-email").textContent = client.email;
+    loadOrders();
+    loadClientNotifications();
+  }
+  function showAuth(){
+    document.getElementById("auth-view").style.display = "block";
+    document.getElementById("account-view").style.display = "none";
+  }
+
+  /* ---------- Notifications (cloche) ---------- */
+  function timeAgo(iso){
+    var d = new Date((iso || "").replace(" ", "T") + "Z");
+    var diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+    if (diffMin < 1) return "à l'instant";
+    if (diffMin < 60) return "il y a " + diffMin + " min";
+    var diffH = Math.round(diffMin / 60);
+    if (diffH < 24) return "il y a " + diffH + " h";
+    return d.toLocaleDateString("fr-FR");
+  }
+  function loadClientNotifications(){
+    fetch("/api/client/notifications").then(function(r){ return r.json(); }).then(function(data){
+      var list = data.notifications || [], unread = data.unread || 0;
+      var badge = document.getElementById("cl-notif-badge");
+      badge.style.display = unread > 0 ? "flex" : "none";
+      badge.textContent = unread > 99 ? "99+" : unread;
+      var listEl = document.getElementById("cl-notif-list");
+      listEl.innerHTML = list.length ? list.map(function(n){
+        return '<div class="cl-notif-item' + (n.lu ? "" : " unread") + '" data-id="' + n.id + '" data-lien="' + esc(n.lien || "") + '">' +
+          '<span class="ni-title">' + esc(n.titre) + '</span>' +
+          (n.corps ? '<span class="ni-body">' + esc(n.corps) + '</span>' : '') +
+          '<span class="ni-time">' + timeAgo(n.created_at) + '</span>' +
+        '</div>';
+      }).join("") : '<div class="cl-notif-empty">Aucune notification pour le moment.</div>';
+      listEl.querySelectorAll(".cl-notif-item").forEach(function(item){
+        item.addEventListener("click", function(){
+          var id = item.dataset.id, lien = item.dataset.lien;
+          if (item.classList.contains("unread")) {
+            fetch("/api/client/notifications/" + id + "/read", { method:"PATCH" }).then(loadClientNotifications);
+          }
+          if (lien && lien !== "compte.html") window.location.href = lien;
+        });
+      });
+    });
+  }
+  document.getElementById("cl-notif-bell").addEventListener("click", function(e){
+    e.stopPropagation();
+    document.getElementById("cl-notif-panel").classList.toggle("open");
+  });
+  document.addEventListener("click", function(e){
+    var panel = document.getElementById("cl-notif-panel");
+    if (panel.classList.contains("open") && !panel.contains(e.target) && e.target.id !== "cl-notif-bell") panel.classList.remove("open");
+  });
+  document.getElementById("cl-notif-read-all").addEventListener("click", function(){
+    fetch("/api/client/notifications/read-all", { method:"POST" }).then(loadClientNotifications);
+  });
+
+  function loadOrders(){
+    fetch("/api/client/orders").then(function(r){ return r.json(); }).then(function(data){
+      var orders = data.orders || [];
+      var wrap = document.getElementById("orders-list");
+      if(!orders.length){ document.getElementById("orders-empty").style.display = "block"; wrap.innerHTML=""; return; }
+      document.getElementById("orders-empty").style.display = "none";
+      wrap.innerHTML = orders.map(function(o){
+        var items = (o.items||[]).map(function(it){
+          return '<div class="order-item-line"><span>'+esc(it.titre)+' × '+it.quantite+'</span>' +
+            (it.downloadUrl ? '<a href="'+esc(it.downloadUrl)+'">Télécharger</a>' : '<span style="color:var(--ink-soft)">Non disponible</span>') +
+          '</div>';
+        }).join("");
+        return '<div class="order-card">' +
+          '<div class="head"><strong>'+esc(o.numero)+'</strong><span class="admin-tag">'+esc(STATUT_LABEL[o.statut]||o.statut)+'</span></div>' +
+          '<div>'+items+'</div>' +
+          '<div style="text-align:right; margin-top:.6rem; font-family:var(--mono); font-size:.85rem; color:var(--ink-soft)">'+FCFA.format(o.montant)+' FCFA</div>' +
+        '</div>';
+      }).join("");
+    });
+  }
+
+  var SW_STATUT_LABEL = { active:"Active", expiree:"Expirée", suspendue:"Suspendue", annulee:"Annulée" };
+
+  function loadSoftware(){
+    fetch("/api/client/software").then(function(r){ return r.json(); }).then(function(data){
+      var list = data.licenses || [];
+      var wrap = document.getElementById("software-list");
+      if(!list.length){ document.getElementById("software-empty").style.display = "block"; wrap.innerHTML=""; return; }
+      document.getElementById("software-empty").style.display = "none";
+      wrap.innerHTML = list.map(function(l){
+        return '<div class="sw-license-card">' +
+          '<div class="head"><img src="'+esc(l.apercu||"img/brand/logo.png")+'" alt="">' +
+            '<div><h4>'+esc(l.logiciel)+(l.plan ? ' <span style="color:var(--ink-soft); font-weight:400; font-size:.85rem">— '+esc(l.plan)+'</span>' : '')+'</h4>' +
+            '<span class="sw-status '+esc(l.status)+'">'+esc(SW_STATUT_LABEL[l.status]||l.status)+'</span>' +
+            (l.nouvelle_maj_disponible ? '<span class="sw-update-badge">Nouvelle version disponible</span>' : '') +
+            '</div></div>' +
+          '<div class="row"><span>Clé de licence</span></div>' +
+          '<div class="sw-license-key">'+esc(l.license_key)+'</div>' +
+          '<div class="row">' +
+            '<span>'+(l.expires_at ? "Expire le "+esc(l.expires_at.slice(0,10)) : "Licence permanente")+'</span>' +
+            '<span>'+esc(l.max_devices)+' appareil(s) · '+esc(l.max_users)+' utilisateur(s)</span>' +
+          '</div>' +
+          '<div class="actions">' +
+            (l.can_download ? '<a class="btn btn-primary" href="'+esc(l.download_url)+'">Télécharger'+(l.derniere_version ? " (v"+esc(l.derniere_version)+")" : "")+'</a>' : '<span class="btn btn-ghost" style="opacity:.6; pointer-events:none">Indisponible</span>') +
+            '<a class="btn btn-ghost" href="index.html#contact">Contacter le support</a>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+    });
+  }
+
+  var TE_STATUT_LABEL = { en_attente: "En attente de validation", publie: "Publié sur le site", rejete: "Non retenu" };
+
+  function setStars(n){
+    document.querySelectorAll("#te-stars button").forEach(function(b){
+      b.classList.toggle("on", Number(b.dataset.v) <= n);
+    });
+    document.getElementById("te-note").value = n;
+  }
+  document.querySelectorAll("#te-stars button").forEach(function(b){
+    b.addEventListener("click", function(){ setStars(Number(b.dataset.v)); });
+  });
+
+  function loadTestimonial(){
+    fetch("/api/client/testimonials/mine").then(function(r){ return r.json(); }).then(function(data){
+      var t = data.testimonial;
+      var tag = document.getElementById("testimonial-statut");
+      var delBtn = document.getElementById("testimonial-delete");
+      if(t){
+        document.getElementById("te-nom").value = t.nom || "";
+        document.getElementById("te-texte").value = t.texte || "";
+        setStars(t.note || 5);
+        tag.textContent = TE_STATUT_LABEL[t.statut] || t.statut;
+        tag.className = "te-status-tag " + t.statut;
+        tag.style.display = "inline-block";
+        delBtn.style.display = "block";
+      } else {
+        document.getElementById("te-texte").value = "";
+        setStars(5);
+        tag.style.display = "none";
+        delBtn.style.display = "none";
+      }
+    });
+  }
+
+  document.getElementById("testimonial-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("testimonial-error"), ok = document.getElementById("testimonial-success");
+    err.classList.remove("show"); ok.classList.remove("show");
+    fetch("/api/client/testimonials/mine", { method:"PUT", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        nom: document.getElementById("te-nom").value,
+        texte: document.getElementById("te-texte").value,
+        note: document.getElementById("te-note").value
+      }) })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if(res.status !== 200) throw new Error(res.data.error || "Impossible d'enregistrer le témoignage.");
+        ok.textContent = "Merci ! Votre témoignage a été envoyé et sera visible sur le site après validation.";
+        ok.classList.add("show");
+        loadTestimonial();
+      }).catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
+  });
+
+  document.getElementById("testimonial-delete").addEventListener("click", function(){
+    if(!confirm("Supprimer définitivement votre témoignage ?")) return;
+    fetch("/api/client/testimonials/mine", { method:"DELETE" }).then(function(){ loadTestimonial(); });
+  });
+
+  function showTab(tab){
+    ["orders","software","testimonial","account"].forEach(function(t){
+      document.getElementById("tab-"+t).classList.toggle("active", t === tab);
+      var viewId = t === "account" ? "account-tab-view" : t+"-view";
+      document.getElementById(viewId).style.display = t === tab ? "block" : "none";
+    });
+    if(tab === "software") loadSoftware();
+    if(tab === "testimonial") loadTestimonial();
+  }
+  document.getElementById("tab-orders").addEventListener("click", function(){ showTab("orders"); });
+  document.getElementById("tab-software").addEventListener("click", function(){ showTab("software"); });
+  document.getElementById("tab-testimonial").addEventListener("click", function(){ showTab("testimonial"); });
+  document.getElementById("tab-account").addEventListener("click", function(){ showTab("account"); });
+
+  // ---------- Suppression définitive du compte ----------
+  document.getElementById("delete-account-btn").addEventListener("click", function(){
+    document.getElementById("delete-account-confirm").style.display = "block";
+    document.getElementById("delete-account-btn").style.display = "none";
+  });
+  document.getElementById("delete-account-cancel").addEventListener("click", function(){
+    document.getElementById("delete-account-confirm").style.display = "none";
+    document.getElementById("delete-account-btn").style.display = "inline-flex";
+    document.getElementById("delete-account-password").value = "";
+    document.getElementById("delete-account-error").classList.remove("show");
+  });
+  document.getElementById("delete-account-confirm-btn").addEventListener("click", function(){
+    var err = document.getElementById("delete-account-error");
+    var btn = this;
+    var password = document.getElementById("delete-account-password").value;
+    if (!password) { err.textContent = "Veuillez saisir votre mot de passe."; err.classList.add("show"); return; }
+    err.classList.remove("show");
+    btn.disabled = true; btn.textContent = "Suppression…";
+    fetch("/api/client/account", { method:"DELETE", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ password: password }) })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if (res.status !== 200) throw new Error(res.data.error || "Suppression impossible.");
+        alert("Votre compte a été supprimé définitivement. Merci d'avoir utilisé OKIM ART.");
+        window.location.href = "index.html";
+      })
+      .catch(function(e){
+        err.textContent = e.message; err.classList.add("show");
+        btn.disabled = false; btn.textContent = "Confirmer la suppression";
+      });
+  });
+
+  // état initial
+  fetch("/api/auth/client/me").then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
+    if(data && data.client) showAccount(data.client); else showAuth();
+  });
+
+  document.getElementById("tab-login").addEventListener("click", function(){
+    this.classList.add("active"); document.getElementById("tab-register").classList.remove("active");
+    document.getElementById("login-card").style.display = "block"; document.getElementById("register-card").style.display = "none";
+  });
+  document.getElementById("tab-register").addEventListener("click", function(){
+    this.classList.add("active"); document.getElementById("tab-login").classList.remove("active");
+    document.getElementById("register-card").style.display = "block"; document.getElementById("login-card").style.display = "none";
+  });
+
+  document.getElementById("login-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("login-error"); err.classList.remove("show");
+    fetch("/api/auth/client/login", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ email: document.getElementById("li-email").value, password: document.getElementById("li-password").value }) })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if(res.status !== 200) throw new Error(res.data.error || "Connexion impossible.");
+        showAccount(res.data.client);
+      }).catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
+  });
+
+  // ---------- Mot de passe oublié ----------
+  document.getElementById("forgot-link").addEventListener("click", function(e){
+    e.preventDefault();
+    document.getElementById("login-card").style.display = "none";
+    document.getElementById("forgot-card").style.display = "block";
+    document.getElementById("forgot-error").classList.remove("show");
+    document.getElementById("forgot-success").classList.remove("show");
+  });
+  document.getElementById("back-to-login-link").addEventListener("click", function(e){
+    e.preventDefault();
+    document.getElementById("forgot-card").style.display = "none";
+    document.getElementById("login-card").style.display = "block";
+  });
+  document.getElementById("forgot-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("forgot-error"), ok = document.getElementById("forgot-success");
+    err.classList.remove("show"); ok.classList.remove("show");
+    fetch("/api/auth/client/forgot-password", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ email: document.getElementById("fp-email").value }) })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if(res.status !== 200) throw new Error(res.data.error || "Une erreur est survenue.");
+        ok.textContent = res.data.message || "Si un compte existe avec cet email, un lien vient d'être envoyé.";
+        ok.classList.add("show");
+        document.getElementById("forgot-form").reset();
+      }).catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
+  });
+
+  document.getElementById("re-licence").addEventListener("change", function(){
+    document.getElementById("register-submit").disabled = !this.checked;
+  });
+
+  document.getElementById("register-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("register-error"); err.classList.remove("show");
+    if (!document.getElementById("re-licence").checked) {
+      err.textContent = "Vous devez accepter la licence d'utilisation pour continuer.";
+      err.classList.add("show");
+      return;
+    }
+    fetch("/api/auth/client/register", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        nom: document.getElementById("re-nom").value,
+        email: document.getElementById("re-email").value,
+        telephone: document.getElementById("re-telephone").value,
+        password: document.getElementById("re-password").value,
+        accepte_licence: true
+      }) })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        if(res.status !== 200) throw new Error(res.data.error || "Inscription impossible.");
+        showAccount(res.data.client);
+      }).catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", function(){
+    fetch("/api/auth/client/logout", { method:"POST" }).then(function(){ showAuth(); });
+  });
+})();
+</script>
+<script src="js/okimbox.js"></script>
+</body>
+</html>

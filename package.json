@@ -1,0 +1,32 @@
+{
+  "name": "okim-art-platform",
+  "version": "2.0.0",
+  "description": "Plateforme administrable OKIM ART — site vitrine + boutique + admin (PostgreSQL)",
+  "main": "server/server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "seed": "node server/seed.js",
+    "backup:sqlite": "node scripts/backup-sqlite.js",
+    "migrate:sqlite-to-postgres": "node scripts/migrate-sqlite-to-postgres.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.5.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "nanoid": "^3.3.18",
+    "nodemailer": "^9.1.1",
+    "pdfkit": "^0.15.0",
+    "pg": "^8.13.1",
+    "sharp": "^0.35.3"
+  }
+}

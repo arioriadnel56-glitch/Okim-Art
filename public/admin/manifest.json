@@ -1,0 +1,16 @@
+{
+  "name": "OKIM ART — Administration",
+  "short_name": "OKIM Admin",
+  "description": "Tableau de bord de gestion — OKIM ART",
+  "start_url": "/admin/login.html",
+  "scope": "/admin/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#141a30",
+  "theme_color": "#141a30",
+  "icons": [
+    { "src": "/img/brand/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/img/brand/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/img/brand/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

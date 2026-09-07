@@ -1,0 +1,63 @@
+# ============================================================
+# render.yaml — déploiement "Blueprint" sur Render
+# ============================================================
+# CORRIGÉ (2 bugs bloquants pour un déploiement réel) :
+#
+# 1) L'ancienne version montait un disque persistant Render pour /uploads,
+#    ce qui obligeait le plan payant "Starter" — exactement le problème que
+#    la migration Cloudinary vient résoudre. Toutes les images/vidéos/fichiers
+#    passent désormais par Cloudinary (voir server/utils/upload.js) : plus
+#    aucun disque persistant n'est nécessaire, donc le plan "free" suffit.
+#
+# 2) L'ancienne version déclarait une base PostgreSQL gérée par RENDER
+#    (bloc "databases:" + "fromDatabase") et branchait DATABASE_URL dessus
+#    automatiquement — ce qui aurait ÉCRASÉ silencieusement votre base
+#    SUPABASE réelle par une base Render vide au déploiement. DATABASE_URL
+#    doit être collé à la main dans le dashboard Render (valeur secrète,
+#    "sync: false" ci-dessous = Render vous la demande sans la stocker dans
+#    ce fichier versionné).
+services:
+  - type: web
+    name: okim-art-platform
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Généré automatiquement par Render au premier déploiement — vous
+      # n'avez rien à saisir, et il ne sera jamais visible dans ce fichier.
+      - key: JWT_SECRET
+        generateValue: true
+
+      # Base de données Supabase — collez votre "Connection string" (mode
+      # "Session pooler", port 5432) depuis Supabase > Project Settings >
+      # Database > Connection string. sync:false = Render vous demandera
+      # la valeur lors du premier déploiement, sans jamais l'écrire ici.
+      - key: DATABASE_URL
+        sync: false
+
+      # Ne PAS mettre "false" ici : Supabase exige TLS (voir server/db.js).
+      - key: PGSSL
+        value: "true"
+
+      # Premier compte admin — email en clair (pas un secret), mot de passe
+      # volontairement absent : laissez-le vide pour que le serveur en
+      # génère un fort tout seul au premier démarrage (voir ADMIN-IDENTIFIANTS.txt).
+      - key: FIRST_ADMIN_EMAIL
+        sync: false
+
+      # Cloudinary — dashboard.cloudinary.com > Dashboard, les 3 valeurs
+      # apparaissent directement en haut de page.
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_VIDEO_FOLDER
+        value: okimart/videos

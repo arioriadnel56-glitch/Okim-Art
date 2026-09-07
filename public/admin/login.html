@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connexion — Administration OKIM ART</title>
+<link rel="icon" href="../img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="../img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="../img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#141a30">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body class="admin-body">
+
+<div class="admin-auth">
+  <div class="admin-auth-card">
+    <img src="../img/brand/logo.png" alt="OKIM ART" class="auth-logo">
+    <h1>OKIM ART</h1>
+    <p class="sub">Espace administrateur</p>
+
+    <div class="admin-error" id="err"></div>
+
+    <form id="login-form">
+      <div class="admin-field">
+        <label for="email">E-mail</label>
+        <input type="email" id="email" name="email" autocomplete="username" required>
+      </div>
+      <div class="admin-field">
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary admin-submit" id="submit-btn">Se connecter</button>
+    </form>
+
+    <p style="text-align:center; margin-top:1rem">
+      <a href="#" id="show-forgot" style="font-size:.82rem; color:var(--admin-muted, #8a8577); text-decoration:underline">Mot de passe oublié ?</a>
+    </p>
+
+    <form id="forgot-form" style="display:none">
+      <p style="font-size:.82rem; color:var(--admin-muted, #8a8577); margin:0 0 1rem">
+        Indiquez votre e-mail et le nom déjà enregistré sur votre compte admin (visible en haut du tableau de bord) pour définir un nouveau mot de passe.
+      </p>
+      <div class="admin-error" id="forgot-err"></div>
+      <div class="admin-success" id="forgot-ok">Mot de passe changé — vous pouvez vous connecter.</div>
+      <div class="admin-field">
+        <label for="f-email">E-mail</label>
+        <input type="email" id="f-email" required>
+      </div>
+      <div class="admin-field">
+        <label for="f-nom">Nom enregistré sur le compte</label>
+        <input type="text" id="f-nom" required>
+      </div>
+      <div class="admin-field">
+        <label for="f-pass">Nouveau mot de passe (8 caractères min.)</label>
+        <input type="password" id="f-pass" minlength="8" required>
+      </div>
+      <button type="submit" class="btn btn-primary admin-submit" id="forgot-submit-btn">Réinitialiser le mot de passe</button>
+      <p style="text-align:center; margin-top:.8rem">
+        <a href="#" id="show-login" style="font-size:.82rem; color:var(--admin-muted, #8a8577); text-decoration:underline">Retour à la connexion</a>
+      </p>
+    </form>
+  </div>
+</div>
+
+<script>
+  var form = document.getElementById("login-form");
+  var err = document.getElementById("err");
+  var btn = document.getElementById("submit-btn");
+
+  // Si déjà connecté, aller directement au dashboard.
+  fetch("/api/auth/admin/me").then(function(r){
+    if(r.ok) window.location.href = "dashboard.html";
+  });
+
+  form.addEventListener("submit", function(e){
+    e.preventDefault();
+    err.classList.remove("show");
+    btn.textContent = "Connexion...";
+    fetch("/api/auth/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("email").value,
+        password: document.getElementById("password").value
+      })
+    }).then(function(r){ return r.json().then(function(data){ return {status:r.status, data:data}; }); })
+      .then(function(res){
+        if(res.status === 200){
+          window.location.href = "dashboard.html";
+        } else {
+          err.textContent = res.data.error || "Connexion impossible.";
+          err.classList.add("show");
+          btn.textContent = "Se connecter";
+        }
+      }).catch(function(){
+        err.textContent = "Impossible de contacter le serveur.";
+        err.classList.add("show");
+        btn.textContent = "Se connecter";
+      });
+  });
+
+  var forgotForm = document.getElementById("forgot-form");
+  document.getElementById("show-forgot").addEventListener("click", function(e){
+    e.preventDefault();
+    form.style.display = "none";
+    document.getElementById("show-forgot").parentElement.style.display = "none";
+    forgotForm.style.display = "block";
+  });
+  document.getElementById("show-login").addEventListener("click", function(e){
+    e.preventDefault();
+    forgotForm.style.display = "none";
+    form.style.display = "block";
+    document.getElementById("show-forgot").parentElement.style.display = "block";
+  });
+
+  forgotForm.addEventListener("submit", function(e){
+    e.preventDefault();
+    var fErr = document.getElementById("forgot-err"), fOk = document.getElementById("forgot-ok");
+    var fBtn = document.getElementById("forgot-submit-btn");
+    fErr.classList.remove("show"); fOk.classList.remove("show");
+    fBtn.textContent = "Vérification...";
+    fetch("/api/auth/admin/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("f-email").value,
+        nom: document.getElementById("f-nom").value,
+        nouveau_mot_de_passe: document.getElementById("f-pass").value
+      })
+    }).then(function(r){ return r.json().then(function(data){ return {status:r.status, data:data}; }); })
+      .then(function(res){
+        fBtn.textContent = "Réinitialiser le mot de passe";
+        if(res.status === 200){
+          fOk.classList.add("show");
+          forgotForm.reset();
+          setTimeout(function(){ document.getElementById("show-login").click(); }, 1500);
+        } else {
+          fErr.textContent = res.data.error || "Impossible de réinitialiser le mot de passe.";
+          fErr.classList.add("show");
+        }
+      }).catch(function(){
+        fBtn.textContent = "Réinitialiser le mot de passe";
+        fErr.textContent = "Impossible de contacter le serveur.";
+        fErr.classList.add("show");
+      });
+  });
+</script>
+
+</body>
+</html>

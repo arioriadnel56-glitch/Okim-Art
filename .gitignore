@@ -1,0 +1,24 @@
+# ============================================================
+# .gitignore — CRITIQUE avant tout `git push` : sans ce fichier, .env
+# (secrets Cloudinary, mot de passe Supabase, JWT_SECRET) partirait
+# en clair dans l'historique Git dès le premier commit.
+# ============================================================
+
+# Secrets — ne JAMAIS committer
+.env
+.env.local
+ADMIN-IDENTIFIANTS.txt
+
+# Dépendances (réinstallées par `npm install` au déploiement)
+node_modules/
+
+# Anciens fichiers uploadés en local (avant migration Cloudinary) —
+# ne doivent pas gonfler le dépôt Git ; sur Render ce dossier est de
+# toute façon éphémère.
+uploads/private/
+uploads/public/
+
+# Divers
+.DS_Store
+npm-debug.log*
+*.log

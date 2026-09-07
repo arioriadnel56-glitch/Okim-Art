@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boutique — OKIM ART</title>
+<link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#141a30">
+<meta name="description" content="Achetez des photographies originales OKIM ART en haute résolution, livraison numérique sécurisée après paiement.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/shop.css">
+<link rel="stylesheet" href="css/okimbox.css">
+</head>
+<body>
+
+<header class="nav scrolled" id="nav">
+  <a href="index.html" class="brand"><img src="img/brand/logo.png" alt="OKIM ART" class="brand-logo" id="brand-logo-img"> OKIM ART</a>
+  <nav class="nav-links">
+    <a href="index.html#about">À propos</a>
+    <a href="index.html#services">Services</a>
+    <a href="index.html#portfolio">Portfolio</a>
+    <a href="index.html#formations">Formations</a>
+    <a href="boutique.html">Boutique</a>
+    <a href="logiciels.html">Outils &amp; Logiciels</a>
+    <a href="index.html#contact">Contact</a>
+  </nav>
+  <div class="nav-right">
+    <a href="compte.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Espace client</a>
+    <a href="panier.html" class="btn btn-primary nav-cta" style="padding:.6rem 1.1rem">Panier (<span id="cart-count">0</span>)</a>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Ouvrir le menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<div class="mobile-panel" id="mobile-panel">
+  <a href="index.html#about">À propos</a>
+  <a href="index.html#services">Services</a>
+  <a href="index.html#portfolio">Portfolio</a>
+  <a href="index.html#formations">Formations</a>
+  <a href="boutique.html">Boutique</a>
+  <a href="index.html#contact">Contact</a>
+  <a href="compte.html">Espace client</a>
+  <a href="panier.html">Panier</a>
+</div>
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow" style="justify-content:center"><span></span>Boutique</p>
+    <h1>Photographies originales,<br><em>en haute résolution.</em></h1>
+    <p>Chaque tirage numérique est livré après confirmation du paiement, via un lien de téléchargement sécurisé.</p>
+  </div>
+</section>
+
+<section class="page-section">
+  <div class="wrap">
+    <div id="shop-grid" class="shop-grid"></div>
+    <p id="shop-empty" class="shop-empty" style="display:none">Aucune photographie n'est en vente pour le moment. Revenez bientôt.</p>
+  </div>
+</section>
+
+<footer>
+  <span class="f-brand"><img src="img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
+  <div class="f-socials">
+    <a href="#" id="f-instagram">Instagram</a>
+    <a href="#" id="f-facebook">Facebook</a>
+    <a href="index.html#contact">Contact</a>
+  </div>
+  <a href="#nav" class="to-top" aria-label="Retour en haut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg></a>
+</footer>
+
+<script src="js/site-data.js"></script>
+<script src="js/cart.js"></script>
+<script>
+(function(){
+  var FCFA = new Intl.NumberFormat("fr-FR");
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+  fetch("/api/products").then(function(r){ return r.json(); }).then(function(data){
+    var products = data.products || [];
+    var grid = document.getElementById("shop-grid");
+    if(!products.length){ document.getElementById("shop-empty").style.display = "block"; return; }
+    grid.innerHTML = products.map(function(p){
+      return '<div class="product-card">' +
+        '<div class="thumb"><img src="'+esc(p.apercu)+'" alt="'+esc(p.titre)+'"></div>' +
+        '<div class="body">' +
+          '<h3>'+esc(p.titre)+'</h3>' +
+          '<p>'+esc(p.description||"")+'</p>' +
+          '<span class="licence">'+esc(p.licence)+'</span>' +
+          '<span class="price">'+FCFA.format(p.prix)+' FCFA</span>' +
+          '<button class="btn btn-primary" data-add="'+p.id+'" data-titre="'+esc(p.titre)+'" data-prix="'+p.prix+'" data-img="'+esc(p.apercu)+'">Ajouter au panier</button>' +
+        '</div></div>';
+    }).join("");
+    grid.querySelectorAll("[data-add]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        OkimCart.add({ id: btn.dataset.add, titre: btn.dataset.titre, prix: Number(btn.dataset.prix), img: btn.dataset.img });
+        btn.textContent = "Ajouté ✓";
+        setTimeout(function(){ btn.textContent = "Ajouter au panier"; }, 1200);
+      });
+    });
+  }).catch(function(){
+    document.getElementById("shop-empty").style.display = "block";
+  });
+
+  var nav = document.getElementById("nav");
+  document.addEventListener("scroll", function(){ if(window.scrollY>40) nav.classList.add("scrolled"); }, {passive:true});
+  var toggle = document.getElementById("nav-toggle"), panel = document.getElementById("mobile-panel");
+  toggle.addEventListener("click", function(){ toggle.classList.toggle("open"); panel.classList.toggle("open"); });
+})();
+</script>
+<script src="js/okimbox.js"></script>
+</body>
+</html>

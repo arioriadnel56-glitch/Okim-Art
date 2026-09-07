@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Administration — OKIM ART</title>
+<link rel="icon" href="../img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="../img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="../img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#141a30">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body class="admin-body">
+
+<div class="admin-shell">
+  <aside class="admin-sidebar">
+    <div class="admin-brand"><img src="../img/brand/logo.png" alt="OKIM ART" class="admin-brand-logo"> OKIM ART</div>
+    <nav class="admin-nav" id="admin-nav">
+      <button data-section="dashboard" class="active">Tableau de bord</button>
+      <span class="admin-nav-group">Contenu</span>
+      <button data-section="photos">Portfolio</button>
+      <button data-section="categories">Catégories</button>
+      <button data-section="services">Services</button>
+      <button data-section="formations">Formations</button>
+      <span class="admin-nav-group">Boutique</span>
+      <button data-section="products">Boutique</button>
+      <button data-section="software">Logiciels</button>
+      <button data-section="licenses">Licences</button>
+      <span class="admin-nav-group">Clients</span>
+      <button data-section="gallery">Galerie Client</button>
+      <button data-section="orders">Commandes <span class="badge" id="badge-orders">0</span></button>
+      <button data-section="messages">Messages <span class="badge" id="badge-messages">0</span></button>
+      <button data-section="testimonials">Témoignages <span class="badge" id="badge-testimonials">0</span></button>
+      <span class="admin-nav-group">Système</span>
+      <button data-section="trash">Corbeille <span class="badge" id="badge-trash">0</span></button>
+      <button data-section="settings" id="nav-settings-btn">Paramètres</button>
+    </nav>
+    <button class="admin-logout" id="logout-btn">Se déconnecter</button>
+  </aside>
+
+  <main class="admin-main">
+
+    <div class="admin-topbar">
+      <div class="admin-notif-wrap">
+        <button class="admin-bell" id="notif-bell" aria-label="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+          <span class="admin-bell-badge" id="notif-badge" style="display:none">0</span>
+        </button>
+        <div class="admin-notif-panel" id="notif-panel">
+          <div class="admin-notif-panel-head">
+            <span>Notifications</span>
+            <button type="button" id="notif-read-all">Tout marquer comme lu</button>
+          </div>
+          <div class="admin-notif-list" id="notif-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== DASHBOARD ===== -->
+    <section class="admin-section active" id="section-dashboard">
+      <div class="admin-section-head">
+        <div><h2>Tableau de bord</h2><p>Vue d'ensemble de la plateforme OKIM ART.</p></div>
+      </div>
+      <div class="admin-toolbar" style="align-items:center; gap:.8rem">
+        <button class="btn btn-ghost" id="btn-reset-dashboard">Réinitialiser les compteurs</button>
+        <span id="dashboard-reset-info" style="font-size:.78rem; color:var(--admin-muted,#8a8577)"></span>
+      </div>
+      <div class="admin-stats" id="stats-grid"></div>
+    </section>
+
+    <!-- ===== PORTFOLIO ===== -->
+    <section class="admin-section" id="section-photos">
+      <div class="admin-section-head">
+        <div><h2>Portfolio</h2><p>Ajoutez, publiez ou masquez les photographies affichées sur le site.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-photo">+ Ajouter une photo</button></div>
+
+      <div class="admin-panel" id="panel-photo">
+        <h3 id="panel-photo-title">Ajouter une photo</h3>
+        <form id="form-photo">
+          <input type="hidden" id="photo-id">
+          <div class="admin-field">
+            <label>Type de fichier</label>
+            <div style="display:flex; gap:1.4rem">
+              <label class="admin-checkbox"><input type="radio" name="photo-type" id="photo-type-photo" value="photo" checked> Photo</label>
+              <label class="admin-checkbox"><input type="radio" name="photo-type" id="photo-type-video" value="video"> Vidéo courte</label>
+            </div>
+          </div>
+          <div class="admin-dropzone" id="photo-dropzone">
+            <div id="photo-preview-wrap"></div>
+            <span id="photo-dropzone-text">Cliquez ou glissez-déposez une image (JPG, PNG, WEBP)</span>
+            <input type="file" id="photo-file" accept="image/jpeg,image/png,image/webp" style="display:none">
+          </div>
+          <div id="photo-upload-progress" style="display:none; margin-top:.7rem">
+            <div style="height:8px; border-radius:100px; background:var(--line); overflow:hidden">
+              <div id="photo-upload-progress-bar" style="height:100%; width:0%; background:var(--brass); transition:width .2s"></div>
+            </div>
+            <span id="photo-upload-progress-text" style="font-size:.8rem; color:var(--ink-soft); display:block; margin-top:.3rem">Envoi de la vidéo vers Cloudinary… 0 %</span>
+          </div>
+          <div class="admin-grid-2" style="margin-top:1.1rem">
+            <div class="admin-field"><label>Titre</label><input type="text" id="photo-titre" required></div>
+            <div class="admin-field"><label>Catégorie</label><select id="photo-category"></select></div>
+            <div class="admin-field full"><label>Description</label><textarea id="photo-description"></textarea></div>
+            <div class="admin-field"><label>Statut</label>
+              <select id="photo-statut"><option value="publie">Publié</option><option value="brouillon">Brouillon</option></select>
+            </div>
+            <div class="admin-field" id="photo-prix-field"><label>Prix (facultatif, FCFA)</label><input type="number" id="photo-prix" min="0"></div>
+            <div class="admin-field"><label class="admin-checkbox"><input type="checkbox" id="photo-a-la-une"> Mettre à la une</label></div>
+            <div class="admin-field" id="photo-watermark-field"><label class="admin-checkbox"><input type="checkbox" id="photo-watermark" checked> Filigrane OKIM ART</label></div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="cancel-photo">Annuler</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="admin-table-wrap"><table class="admin-table" id="table-photos"><thead>
+        <tr><th></th><th>Titre</th><th>Catégorie</th><th>Statut</th><th>À la une</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== CATEGORIES ===== -->
+    <section class="admin-section" id="section-categories">
+      <div class="admin-section-head">
+        <div><h2>Catégories</h2><p>Catégories utilisées pour filtrer le portfolio public.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-category">+ Ajouter une catégorie</button></div>
+      <div class="admin-panel" id="panel-category">
+        <h3 id="panel-category-title">Ajouter une catégorie</h3>
+        <form id="form-category">
+          <input type="hidden" id="category-id">
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Nom</label><input type="text" id="category-nom" required></div>
+            <div class="admin-field"><label>Description</label><input type="text" id="category-description"></div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="cancel-category">Annuler</button>
+          </div>
+        </form>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-categories"><thead>
+        <tr><th>Nom</th><th>Slug</th><th>Description</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== SERVICES ===== -->
+    <section class="admin-section" id="section-services">
+      <div class="admin-section-head">
+        <div><h2>Services</h2><p>Les six services affichés sur la page d'accueil.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-service">+ Ajouter un service</button></div>
+      <div class="admin-panel" id="panel-service">
+        <h3 id="panel-service-title">Ajouter un service</h3>
+        <form id="form-service">
+          <input type="hidden" id="service-id">
+          <div class="admin-dropzone" id="service-dropzone">
+            <div id="service-preview-wrap"></div>
+            <span id="service-dropzone-text">Image du service (facultatif) — cliquez ou glissez-déposez</span>
+            <input type="file" id="service-file" accept="image/jpeg,image/png,image/webp" style="display:none">
+          </div>
+          <div class="admin-grid-2" style="margin-top:1.1rem">
+            <div class="admin-field"><label>Titre</label><input type="text" id="service-titre" required></div>
+            <div class="admin-field"><label>Prix affiché (facultatif)</label><input type="text" id="service-prix" placeholder="ex. À partir de 25 000 FCFA"></div>
+            <div class="admin-field full"><label>Description</label><textarea id="service-description"></textarea></div>
+            <div class="admin-field"><label>Statut</label>
+              <select id="service-statut"><option value="actif">Actif</option><option value="inactif">Inactif</option></select>
+            </div>
+            <div class="admin-field"><label>Ordre d'affichage</label><input type="number" id="service-ordre" value="0"></div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="cancel-service">Annuler</button>
+          </div>
+        </form>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-services"><thead>
+        <tr><th></th><th>Titre</th><th>Statut</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== FORMATIONS ===== -->
+    <section class="admin-section" id="section-formations">
+      <div class="admin-section-head">
+        <div><h2>Formations</h2><p>Ateliers proposés et inscriptions reçues.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-formation">+ Ajouter une formation</button></div>
+      <div class="admin-panel" id="panel-formation">
+        <h3 id="panel-formation-title">Ajouter une formation</h3>
+        <form id="form-formation">
+          <input type="hidden" id="formation-id">
+          <div class="admin-dropzone" id="formation-dropzone">
+            <div id="formation-preview-wrap"></div>
+            <span id="formation-dropzone-text">Image (facultatif) — cliquez ou glissez-déposez</span>
+            <input type="file" id="formation-file" accept="image/jpeg,image/png,image/webp" style="display:none">
+          </div>
+          <div class="admin-grid-2" style="margin-top:1.1rem">
+            <div class="admin-field"><label>Titre</label><input type="text" id="formation-titre" required></div>
+            <div class="admin-field"><label>Niveau / sous-titre</label><input type="text" id="formation-description" placeholder="ex. Débutant"></div>
+            <div class="admin-field full"><label>Programme</label><textarea id="formation-programme"></textarea></div>
+            <div class="admin-field"><label>Prix</label><input type="text" id="formation-prix"></div>
+            <div class="admin-field"><label>Durée</label><input type="text" id="formation-duree" placeholder="ex. 2 jours"></div>
+            <div class="admin-field"><label>Date de session</label><input type="text" id="formation-date" placeholder="ex. 14-15 mars 2027"></div>
+            <div class="admin-field"><label>Lieu</label><input type="text" id="formation-lieu"></div>
+            <div class="admin-field"><label>Places disponibles</label><input type="number" id="formation-places" value="0"></div>
+            <div class="admin-field"><label>Statut</label>
+              <select id="formation-statut"><option value="actif">Actif</option><option value="inactif">Inactif</option></select>
+            </div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="cancel-formation">Annuler</button>
+          </div>
+        </form>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-formations"><thead>
+        <tr><th></th><th>Titre</th><th>Session</th><th>Places</th><th>Statut</th><th>Inscrits</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== BOUTIQUE ===== -->
+    <section class="admin-section" id="section-products">
+      <div class="admin-section-head">
+        <div><h2>Boutique</h2><p>Photographies mises en vente. Le fichier original reste privé et n'est livré qu'après paiement confirmé.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-product">+ Ajouter un produit</button></div>
+      <div class="admin-panel" id="panel-product">
+        <h3 id="panel-product-title">Ajouter un produit</h3>
+        <form id="form-product">
+          <input type="hidden" id="product-id">
+          <div class="admin-dropzone" id="product-dropzone">
+            <div id="product-preview-wrap"></div>
+            <span id="product-dropzone-text">Fichier haute résolution — cliquez ou glissez-déposez (reste privé, seul un aperçu filigrané est public)</span>
+            <input type="file" id="product-file" accept="image/jpeg,image/png,image/webp" style="display:none">
+          </div>
+          <div class="admin-grid-2" style="margin-top:1.1rem">
+            <div class="admin-field"><label>Titre</label><input type="text" id="product-titre" required></div>
+            <div class="admin-field"><label>Prix (FCFA)</label><input type="number" id="product-prix" min="0" required></div>
+            <div class="admin-field full"><label>Description</label><textarea id="product-description"></textarea></div>
+            <div class="admin-field"><label>Licence</label><input type="text" id="product-licence" value="Usage personnel"></div>
+            <div class="admin-field"><label>Statut</label>
+              <select id="product-statut"><option value="actif">Actif</option><option value="inactif">Inactif</option></select>
+            </div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="cancel-product">Annuler</button>
+          </div>
+        </form>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-products"><thead>
+        <tr><th></th><th>Titre</th><th>Prix</th><th>Statut</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== LOGICIELS ===== -->
+    <section class="admin-section" id="section-software">
+      <div class="admin-section-head">
+        <div><h2>Outils & Logiciels</h2><p>Logiciels vendus sous forme de formules (Basic/Pro/Business...). Le fichier n'est jamais public : chaque version est livrée uniquement via une licence active, depuis l'espace client.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-software">+ Ajouter un logiciel</button></div>
+
+      <div class="admin-panel" id="panel-software">
+        <h3 id="panel-software-title">Ajouter un logiciel</h3>
+        <form id="form-software">
+          <input type="hidden" id="sw-id">
+          <div class="admin-dropzone" id="sw-dropzone">
+            <div id="sw-preview-wrap"></div>
+            <span id="sw-dropzone-text">Image / logo affiché sur la carte — cliquez ou glissez-déposez</span>
+            <input type="file" id="sw-file" accept="image/jpeg,image/png,image/webp" style="display:none">
+          </div>
+          <div class="admin-grid-2" style="margin-top:1.1rem">
+            <div class="admin-field"><label>Nom du logiciel</label><input type="text" id="sw-titre" required></div>
+            <div class="admin-field"><label>Catégorie</label><select id="sw-category"></select></div>
+            <div class="admin-field full"><label>Courte description (carte)</label><textarea id="sw-description"></textarea></div>
+            <div class="admin-field"><label>Slogan</label><input type="text" id="sw-slogan"></div>
+            <div class="admin-field"><label>Badge</label>
+              <select id="sw-badge"><option value="">Aucun</option><option value="nouveau">Nouveau</option><option value="populaire">Populaire</option><option value="promotion">Promotion</option></select>
+            </div>
+            <div class="admin-field full"><label>Description détaillée</label><textarea id="sw-description-longue"></textarea></div>
+            <div class="admin-field"><label>Problème résolu</label><input type="text" id="sw-probleme-resolu"></div>
+            <div class="admin-field"><label>Public cible</label><input type="text" id="sw-public-cible"></div>
+            <div class="admin-field"><label>Plateforme</label><input type="text" id="sw-plateforme" placeholder="ex. Web, Windows, macOS"></div>
+            <div class="admin-field"><label>Système compatible</label><input type="text" id="sw-systeme-compatible"></div>
+            <div class="admin-field"><label>Taille</label><input type="text" id="sw-taille" placeholder="ex. 45 Mo"></div>
+            <div class="admin-field"><label>Configuration minimale</label><input type="text" id="sw-configuration-min"></div>
+            <div class="admin-field"><label>Type de licence (affiché)</label><input type="text" id="sw-licence-type" placeholder="ex. Perpétuelle, Abonnement"></div>
+            <div class="admin-field"><label>URL de démo</label><input type="text" id="sw-demo-url" placeholder="https://..."></div>
+            <div class="admin-field"><label>URL vidéo (YouTube/Vimeo ou .mp4)</label><input type="text" id="sw-video-url"></div>
+            <div class="admin-field"><label>Statut</label>
+              <select id="sw-statut"><option value="actif">Actif (visible)</option><option value="inactif">Inactif</option></select>
+            </div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="cancel-software">Annuler</button>
+          </div>
+        </form>
+
+        <!-- Sous-gestion (uniquement visible en modification, un logiciel doit exister d'abord) -->
+        <div id="sw-subpanels" style="display:none; margin-top:2rem; border-top:1px solid var(--admin-line,#e7e2d6); padding-top:1.6rem">
+
+          <h3>Captures d'écran</h3>
+          <div class="admin-multi-preview" id="sw-captures-list" style="margin-bottom:.8rem"></div>
+          <input type="file" id="sw-captures-file" accept="image/jpeg,image/png,image/webp" multiple>
+          <button type="button" class="btn btn-ghost" id="sw-captures-upload" style="margin-left:.6rem">Ajouter ces captures</button>
+
+          <h3 style="margin-top:1.8rem">Formules (plans)</h3>
+          <div class="admin-table-wrap"><table class="admin-table" id="table-sw-plans"><thead>
+            <tr><th>Nom</th><th>Prix</th><th>Périodicité</th><th>Appareils</th><th>Utilisateurs</th><th>Statut</th><th></th></tr>
+          </thead><tbody></tbody></table></div>
+          <form id="form-sw-plan" style="margin-top:1rem">
+            <input type="hidden" id="swp-id">
+            <div class="admin-grid-2">
+              <div class="admin-field"><label>Nom (ex. Basic, Pro, Business)</label><input type="text" id="swp-nom" required></div>
+              <div class="admin-field"><label>Prix (FCFA)</label><input type="number" id="swp-prix" min="0" required></div>
+              <div class="admin-field"><label>Périodicité</label>
+                <select id="swp-periodicite"><option value="unique">Paiement unique</option><option value="mensuel">Abonnement mensuel</option><option value="annuel">Abonnement annuel</option></select>
+              </div>
+              <div class="admin-field"><label>Appareils max.</label><input type="number" id="swp-max-devices" value="1" min="1"></div>
+              <div class="admin-field"><label>Utilisateurs max.</label><input type="number" id="swp-max-users" value="1" min="1"></div>
+              <div class="admin-field"><label>Statut</label><select id="swp-statut"><option value="actif">Actif</option><option value="inactif">Inactif</option></select></div>
+              <div class="admin-field full"><label>Description courte</label><input type="text" id="swp-description"></div>
+              <div class="admin-field full"><label>Fonctionnalités incluses (une par ligne)</label><textarea id="swp-fonctionnalites" placeholder="Gestion des clients&#10;Facturation&#10;Statistiques"></textarea></div>
+            </div>
+            <div class="admin-panel-actions">
+              <button type="submit" class="btn btn-primary" id="swp-submit-btn">Ajouter cette formule</button>
+              <button type="button" class="btn btn-ghost" id="swp-cancel">Annuler la modification</button>
+            </div>
+          </form>
+
+          <h3 style="margin-top:1.8rem">Versions & mises à jour</h3>
+          <div class="admin-table-wrap"><table class="admin-table" id="table-sw-versions"><thead>
+            <tr><th>Version</th><th>Type</th><th>Publiée le</th><th>Notes</th><th></th></tr>
+          </thead><tbody></tbody></table></div>
+          <form id="form-sw-version" style="margin-top:1rem">
+            <div class="admin-grid-2">
+              <div class="admin-field"><label>Numéro de version</label><input type="text" id="swv-version" placeholder="1.1.0" required></div>
+              <div class="admin-field"><label>Type de mise à jour</label>
+                <select id="swv-type"><option value="mineure">Mineure</option><option value="majeure">Majeure</option><option value="correctif">Correctif</option></select>
+              </div>
+              <div class="admin-field"><label>Compatibilité</label><input type="text" id="swv-compatibilite"></div>
+              <div class="admin-field"><label>Fichier</label><input type="file" id="swv-file" required></div>
+              <div class="admin-field full"><label>Notes de version</label><textarea id="swv-notes"></textarea></div>
+            </div>
+            <div class="admin-panel-actions"><button type="submit" class="btn btn-primary">Publier cette version</button></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="admin-table-wrap"><table class="admin-table" id="table-software"><thead>
+        <tr><th></th><th>Nom</th><th>Formules</th><th>Licences émises</th><th>Statut</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== LICENCES ===== -->
+    <section class="admin-section" id="section-licenses">
+      <div class="admin-section-head">
+        <div><h2>Licences</h2><p>Toutes les licences émises (automatiquement à l'achat, ou manuellement ci-dessous). Prolonger, suspendre ou révoquer une licence prend effet immédiatement.</p></div>
+      </div>
+      <div class="admin-toolbar" style="gap:.6rem; flex-wrap:wrap">
+        <input type="search" id="lic-search" placeholder="Rechercher (clé, client, logiciel)…" class="admin-tag" style="padding:.5rem .8rem; min-width:220px">
+        <select id="lic-filter-status" class="admin-tag" style="padding:.5rem .8rem">
+          <option value="">Tous statuts</option>
+          <option value="active">Active</option>
+          <option value="expiree">Expirée</option>
+          <option value="suspendue">Suspendue</option>
+          <option value="annulee">Annulée</option>
+        </select>
+        <button class="btn btn-ghost" id="btn-new-license">+ Générer une licence manuellement</button>
+      </div>
+
+      <div class="admin-panel" id="panel-license">
+        <h3>Générer une licence manuellement</h3>
+        <p style="font-size:.78rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">Utile pour une licence offerte, un partenariat ou un dépannage support. Le client (facultatif) est identifié par son identifiant interne — retrouvez-le dans la fiche de sa commande.</p>
+        <form id="form-license">
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Logiciel</label><select id="lic-software" required></select></div>
+            <div class="admin-field"><label>Formule (facultatif)</label><select id="lic-plan"><option value="">— Aucune (licence libre) —</option></select></div>
+            <div class="admin-field"><label>ID client (facultatif)</label><input type="number" id="lic-client-id" min="1"></div>
+            <div class="admin-field"><label>Périodicité (si pas de formule)</label>
+              <select id="lic-periodicite"><option value="unique">Permanente</option><option value="mensuel">1 mois</option><option value="annuel">1 an</option></select>
+            </div>
+            <div class="admin-field"><label>Appareils max.</label><input type="number" id="lic-max-devices" value="1" min="1"></div>
+            <div class="admin-field"><label>Utilisateurs max.</label><input type="number" id="lic-max-users" value="1" min="1"></div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Générer la licence</button>
+            <button type="button" class="btn btn-ghost" id="cancel-license">Annuler</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="admin-table-wrap"><table class="admin-table" id="table-licenses"><thead>
+        <tr><th>Clé</th><th>Logiciel</th><th>Client</th><th>Statut</th><th>Expire le</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== GALERIE CLIENT ===== -->
+    <section class="admin-section" id="section-gallery">
+      <div class="admin-section-head">
+        <div><h2>Galerie Client</h2><p>Créez une séance pour un client : il reçoit un lien privé et un code PIN pour consulter et télécharger ses photos, sans jamais utiliser son téléphone comme mot de passe.</p></div>
+      </div>
+      <div class="admin-toolbar"><button class="btn btn-primary" id="btn-new-session">+ Nouvelle séance</button></div>
+
+      <div class="admin-panel" id="panel-session">
+        <h3>Créer une séance photo</h3>
+        <form id="form-session">
+          <div class="admin-dropzone" id="session-dropzone">
+            <div id="session-preview-wrap" class="admin-multi-preview"></div>
+            <span id="session-dropzone-text">Cliquez ou glissez-déposez toutes les photos et vidéos de la séance (JPG, PNG, WEBP, MP4, WEBM, MOV)</span>
+            <input type="file" id="session-files" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime" multiple style="display:none">
+          </div>
+          <div class="admin-grid-2" style="margin-top:1.1rem">
+            <div class="admin-field"><label>Nom du client</label><input type="text" id="session-client-name" required></div>
+            <div class="admin-field"><label>Téléphone (facultatif)</label><input type="text" id="session-client-phone"></div>
+            <div class="admin-field"><label>Rétention gratuite (jours)</label><input type="number" id="session-retention" min="1" placeholder="30"></div>
+            <div class="admin-field"><label>Prix de récupération si archivée (FCFA)</label><input type="number" id="session-recovery-price" min="0" placeholder="2000"></div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary" id="session-submit-btn">Créer la séance</button>
+            <button type="button" class="btn btn-ghost" id="cancel-session">Annuler</button>
+          </div>
+        </form>
+
+        <!-- Affiché UNE SEULE FOIS juste après création : le PIN n'est plus jamais récupérable ensuite. -->
+        <div class="admin-success show" id="session-created-panel" style="display:none">
+          <p style="margin:0 0 .6rem"><strong>Séance créée.</strong> Notez ou transmettez ces informations au client maintenant — le code PIN ne sera plus jamais affiché.</p>
+          <div class="admin-field"><label>Lien de la galerie</label><input type="text" id="session-created-link" readonly onclick="this.select()"></div>
+          <div class="admin-field"><label>Code PIN (6 chiffres)</label><input type="text" id="session-created-pin" readonly onclick="this.select()" style="font-family:var(--mono); font-size:1.3rem; letter-spacing:.2em; text-align:center; max-width:160px"></div>
+          <button type="button" class="btn btn-ghost" id="session-created-close">J'ai noté ces informations</button>
+        </div>
+      </div>
+
+      <div class="admin-table-wrap"><table class="admin-table" id="table-sessions"><thead>
+        <tr><th>Client</th><th>Photos</th><th>Statut</th><th>Expire le</th><th>Accès HD</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== COMMANDES ===== -->
+    <section class="admin-section" id="section-orders">
+      <div class="admin-section-head">
+        <div><h2>Commandes</h2><p>Suivi de toutes les commandes ; le paiement KKiaPay confirme automatiquement, le paiement manuel se confirme ici.</p></div>
+      </div>
+      <div class="admin-toolbar" style="align-items:center; gap:.8rem">
+        <label style="font-size:.82rem; color:var(--admin-muted,#8a8577)">Rapport du</label>
+        <input type="date" id="report-date" class="admin-tag" style="padding:.4rem .6rem">
+        <a href="#" id="report-download" class="btn btn-primary" style="padding:.55rem 1.1rem">Télécharger le flux du jour (PDF)</a>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-orders"><thead>
+        <tr><th>N°</th><th>Client</th><th>Montant</th><th>Date</th><th>Statut</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== MESSAGES ===== -->
+    <section class="admin-section" id="section-messages">
+      <div class="admin-section-head">
+        <div><h2>Messages</h2><p>Demandes envoyées via le formulaire de contact du site.</p></div>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-messages"><thead>
+        <tr><th>Nom</th><th>Contact</th><th>Message</th><th>Date</th><th>Statut</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== TÉMOIGNAGES ===== -->
+    <section class="admin-section" id="section-testimonials">
+      <div class="admin-section-head">
+        <div><h2>Témoignages</h2><p>Soumis par les clients depuis leur espace personnel. Rien n'apparaît sur le site public tant que vous ne l'avez pas publié ici.</p></div>
+      </div>
+      <div class="admin-toolbar">
+        <select id="testimonials-filter">
+          <option value="">Tous les statuts</option>
+          <option value="en_attente">En attente</option>
+          <option value="publie">Publiés</option>
+          <option value="rejete">Non retenus</option>
+        </select>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-testimonials"><thead>
+        <tr><th>Client</th><th>Note</th><th>Témoignage</th><th>Date</th><th>Statut</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== CORBEILLE ===== -->
+    <section class="admin-section" id="section-trash">
+      <div class="admin-section-head">
+        <div><h2>Corbeille</h2><p>Les éléments supprimés (photos, catégories, services, formations, produits, messages) restent ici 30 jours avant suppression définitive — vous pouvez les restaurer à tout moment durant ce délai.</p></div>
+      </div>
+      <div class="admin-toolbar">
+        <button class="btn btn-ghost" id="trash-empty-all">Vider toute la corbeille définitivement</button>
+      </div>
+      <div class="admin-table-wrap"><table class="admin-table" id="table-trash"><thead>
+        <tr><th>Type</th><th>Élément</th><th>Supprimé le</th><th>Purge définitive le</th><th></th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ===== PARAMETRES ===== -->
+    <section class="admin-section" id="section-settings">
+      <div class="admin-section-head">
+        <div><h2>Paramètres</h2><p>Informations utilisées automatiquement sur tout le site public.</p></div>
+      </div>
+
+      <div class="admin-panel open">
+        <h3>Profil & contact</h3>
+        <form id="form-settings">
+          <div class="admin-dropzone" id="profile-photo-dropzone">
+            <div id="profile-photo-preview-wrap"></div>
+            <span id="profile-photo-dropzone-text">Photo du photographe (portrait recommandé) — cliquez ou glissez-déposez</span>
+            <input type="file" id="profile-photo-file" accept="image/jpeg,image/png,image/webp" style="display:none">
+          </div>
+          <p style="font-size:.78rem; color:var(--admin-muted,#8a8577); margin:.5rem 0 1.2rem">
+            Affichée dans la section Contact du site, toujours recadrée automatiquement en portrait — n'importe quelle photo fonctionne, pas besoin de la recadrer vous-même avant l'envoi.
+          </p>
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Nom du studio</label><input type="text" id="s-site_nom"></div>
+            <div class="admin-field"><label>Nom du photographe</label><input type="text" id="s-photographe_nom"></div>
+            <div class="admin-field full"><label>Slogan</label><input type="text" id="s-slogan"></div>
+            <div class="admin-field full"><label>Biographie / présentation</label><textarea id="s-bio"></textarea></div>
+            <div class="admin-field"><label>Ville</label><input type="text" id="s-ville"></div>
+            <div class="admin-field"><label>E-mail</label><input type="email" id="s-email"></div>
+            <div class="admin-field"><label>Téléphone 1</label><input type="text" id="s-telephone_1"></div>
+            <div class="admin-field"><label>Téléphone 2</label><input type="text" id="s-telephone_2"></div>
+            <div class="admin-field"><label>WhatsApp (format international, sans +)</label><input type="text" id="s-whatsapp"></div>
+            <div class="admin-field"><label>Message WhatsApp pré-rempli</label><input type="text" id="s-whatsapp_message"></div>
+            <div class="admin-field"><label>Instagram</label><input type="text" id="s-instagram"></div>
+            <div class="admin-field"><label>Facebook</label><input type="text" id="s-facebook"></div>
+            <div class="admin-field full"><label>URL publique du site (pour les liens dans les e-mails)</label><input type="text" id="s-site_url" placeholder="https://okimart.studio"></div>
+            <div class="admin-field"><label>Galerie client — rétention gratuite par défaut (jours)</label><input type="number" id="s-gallery_retention_days" min="1"></div>
+            <div class="admin-field"><label>Galerie client — prix de récupération par défaut (FCFA)</label><input type="number" id="s-gallery_recovery_price" min="0"></div>
+            <div class="admin-field"><label>Galerie client — durée d'accès HD après paiement (heures)</label><input type="number" id="s-gallery_hd_access_hours" min="1"></div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer les paramètres</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="admin-panel open">
+        <h3>Paiement — Mobile Money / carte (KKiaPay)</h3>
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
+          Créez un compte gratuit sur <a href="https://kkiapay.me" target="_blank" rel="noopener">kkiapay.me</a>, récupérez votre <strong>clé publique</strong> (menu Développeurs → Clés API) et collez-la ci-dessous. Copiez ensuite l'URL et le secret de webhook affichés en bas dans votre tableau de bord KKiaPay (menu Webhook), pour que les paiements soient confirmés automatiquement.
+        </p>
+        <form id="form-kkiapay">
+          <div class="admin-grid-2">
+            <div class="admin-field">
+              <label><input type="checkbox" id="kk-enabled" style="width:auto; margin-right:.4rem">Activer le paiement en ligne KKiaPay</label>
+            </div>
+            <div class="admin-field">
+              <label><input type="checkbox" id="kk-sandbox" style="width:auto; margin-right:.4rem">Mode test (sandbox) — à décocher une fois le compte KKiaPay validé</label>
+            </div>
+            <div class="admin-field full"><label>Clé publique KKiaPay</label><input type="text" id="kk-public-key" placeholder="pk_live_... ou pk_sandbox_..."></div>
+          </div>
+          <div class="admin-panel-actions"><button type="submit" class="btn btn-primary">Enregistrer</button></div>
+        </form>
+        <div class="admin-grid-2" style="margin-top:1.2rem">
+          <div class="admin-field">
+            <label>URL de webhook à coller dans KKiaPay</label>
+            <input type="text" id="kk-webhook-url" readonly onclick="this.select()">
+          </div>
+          <div class="admin-field">
+            <label>Secret de webhook à coller dans KKiaPay</label>
+            <input type="text" id="kk-webhook-secret" readonly onclick="this.select()">
+          </div>
+        </div>
+        <div class="admin-panel-actions">
+          <button type="button" class="btn btn-ghost" id="kk-regenerate">Régénérer le secret</button>
+          <button type="button" class="btn btn-ghost" id="kk-clear-cache">Vider le cache des paiements validés</button>
+        </div>
+      </div>
+
+      <div class="admin-panel open">
+        <h3>Assistant IA — okim.box</h3>
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
+          Un assistant conversationnel affiché sur le site public, qui répond aux questions des visiteurs à partir des informations réelles et actuelles du site (services, boutique, formations, logiciels) — jamais d'information inventée. Nécessite une clé API <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Quand l'assistant ne peut pas répondre (réclamation, remboursement, question hors périmètre), la conversation est automatiquement transférée dans vos Messages.
+        </p>
+        <form id="form-assistant">
+          <div class="admin-grid-2">
+            <div class="admin-field">
+              <label><input type="checkbox" id="as-enabled" style="width:auto; margin-right:.4rem">Afficher l'assistant sur le site public</label>
+            </div>
+            <div class="admin-field"><label>Nom affiché</label><input type="text" id="as-name" placeholder="okim.box"></div>
+            <div class="admin-field full"><label>Message d'accueil</label><input type="text" id="as-intro" placeholder="Bonjour, je suis okim.box 👋 Posez-moi vos questions…"></div>
+            <div class="admin-field"><label>Modèle</label><input type="text" id="as-model" placeholder="claude-sonnet-5"></div>
+            <div class="admin-field">
+              <label>Clé API Anthropic <span id="as-key-status" class="admin-tag" style="margin-left:.4rem"></span></label>
+              <input type="password" id="as-api-key" placeholder="Laisser vide pour ne pas changer" autocomplete="off">
+            </div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="as-test">Tester la connexion</button>
+          </div>
+          <p id="as-test-result" style="font-size:.85rem; margin-top:.8rem; display:none"></p>
+        </form>
+      </div>
+
+      <div class="admin-panel open">
+        <h3>Notifications automatiques</h3>
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
+          Recevez un e-mail automatique à chaque commande payée, nouveau message ou inscription à une formation — sans avoir à surveiller le tableau de bord. Envoyé à l'adresse renseignée dans « Profil & contact ». Le client reçoit lui aussi automatiquement ses liens de téléchargement après paiement.
+        </p>
+        <form id="form-notify">
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Serveur SMTP (ex. smtp.gmail.com)</label><input type="text" id="n-smtp_host"></div>
+            <div class="admin-field"><label>Port (587 = STARTTLS, 465 = SSL)</label><input type="text" id="n-smtp_port" placeholder="587"></div>
+            <div class="admin-field"><label>Utilisateur SMTP</label><input type="text" id="n-smtp_user"></div>
+            <div class="admin-field"><label>Mot de passe SMTP</label><input type="password" id="n-smtp_pass" placeholder="laisser vide pour ne pas changer"></div>
+            <div class="admin-field"><label>Nom affiché comme expéditeur</label><input type="text" id="n-smtp_from_name" placeholder="OKIM ART"></div>
+            <div class="admin-field"><label>E-mail expéditeur</label><input type="text" id="n-smtp_from_email"></div>
+            <div class="admin-field">
+              <label><input type="checkbox" id="n-smtp_secure" style="width:auto; margin-right:.4rem">Connexion SSL directe (port 465)</label>
+            </div>
+          </div>
+          <div class="admin-panel-actions">
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <button type="button" class="btn btn-ghost" id="n-test-btn">Envoyer un e-mail de test</button>
+          </div>
+        </form>
+
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:1.4rem 0 1rem">
+          Pour être alerté <strong>autrement que par e-mail</strong> (WhatsApp, SMS, Telegram...), branchez ce webhook à un outil d'automatisation sans code comme <a href="https://make.com" target="_blank" rel="noopener">Make</a>, <a href="https://zapier.com" target="_blank" rel="noopener">Zapier</a> ou <a href="https://n8n.io" target="_blank" rel="noopener">n8n</a> : chaque événement (commande payée, message, inscription) lui sera envoyé, à vous de choisir où il relaie l'alerte.
+        </p>
+        <div class="admin-field full">
+          <label>URL du webhook (optionnel)</label>
+          <input type="text" id="n-webhook_url" placeholder="https://hook.eu1.make.com/...">
+        </div>
+        <div class="admin-panel-actions">
+          <button type="button" class="btn btn-ghost" id="n-webhook-save">Enregistrer le webhook</button>
+        </div>
+      </div>
+
+      <div class="admin-panel open">
+        <h3>Sécurité</h3>
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
+          Le nom ci-dessous sert à réinitialiser votre mot de passe si vous le perdez (via « Mot de passe oublié » sur la page de connexion). Choisissez-en un que vous retiendrez facilement.
+        </p>
+        <form id="form-admin-profile">
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Nom (utilisé pour la récupération de mot de passe)</label><input type="text" id="admin-nom" required></div>
+            <div class="admin-field"><label>E-mail de connexion</label><input type="email" id="admin-email" required></div>
+          </div>
+          <div class="admin-panel-actions"><button type="submit" class="btn btn-ghost">Enregistrer</button></div>
+        </form>
+        <form id="form-password" style="margin-top:1.4rem">
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Mot de passe actuel</label><input type="password" id="p-ancien" required></div>
+            <div class="admin-field"><label>Nouveau mot de passe (8 caractères min.)</label><input type="password" id="p-nouveau" required minlength="8"></div>
+          </div>
+          <div class="admin-panel-actions"><button type="submit" class="btn btn-ghost">Changer le mot de passe</button></div>
+        </form>
+      </div>
+
+      <div class="admin-panel open">
+        <h3>Comptes administrateurs</h3>
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
+          Vous êtes le propriétaire : vous seul pouvez accéder à cette page Paramètres et voir l'identifiant interne des comptes clients. Deux types de comptes employé possibles :
+          <strong>Admin</strong> (accès complet, sauf Paramètres/Comptes) ou <strong>Secrétaire</strong> (Contenu, Boutique et Clients uniquement, sans pouvoir rien supprimer).
+        </p>
+        <div class="admin-table-wrap"><table class="admin-table" id="table-admins"><thead>
+          <tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th></th></tr>
+        </thead><tbody></tbody></table></div>
+        <form id="form-new-admin" style="margin-top:1.2rem">
+          <div class="admin-grid-2">
+            <div class="admin-field"><label>Nom</label><input type="text" id="na-nom" required></div>
+            <div class="admin-field"><label>E-mail</label><input type="email" id="na-email" required></div>
+            <div class="admin-field"><label>Mot de passe (8 caractères min.)</label><input type="password" id="na-password" required minlength="8"></div>
+            <div class="admin-field">
+              <label>Type de compte</label>
+              <select id="na-role">
+                <option value="admin">Admin (accès complet, sauf Paramètres)</option>
+                <option value="secretary">Secrétaire (Contenu, Boutique, Clients — lecture/écriture, sans suppression)</option>
+              </select>
+            </div>
+          </div>
+          <div class="admin-panel-actions"><button type="submit" class="btn btn-primary">Ajouter ce compte employé</button></div>
+        </form>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

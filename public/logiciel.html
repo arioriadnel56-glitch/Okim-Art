@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logiciel — OKIM ART</title>
+<link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#141a30">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/software.css">
+<link rel="stylesheet" href="css/okimbox.css">
+</head>
+<body>
+
+<header class="nav scrolled" id="nav">
+  <a href="index.html" class="brand"><img src="img/brand/logo.png" alt="OKIM ART" class="brand-logo"> OKIM ART</a>
+  <nav class="nav-links">
+    <a href="index.html#about">À propos</a>
+    <a href="boutique.html">Boutique</a>
+    <a href="logiciels.html">Outils & Logiciels</a>
+    <a href="index.html#contact">Contact</a>
+  </nav>
+  <div class="nav-right">
+    <a href="compte.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Espace client</a>
+    <a href="panier.html" class="btn btn-primary nav-cta" style="padding:.6rem 1.1rem">Panier (<span id="cart-count">0</span>)</a>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Ouvrir le menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<div class="mobile-panel" id="mobile-panel">
+  <a href="index.html#about">À propos</a>
+  <a href="boutique.html">Boutique</a>
+  <a href="logiciels.html">Outils & Logiciels</a>
+  <a href="index.html#contact">Contact</a>
+  <a href="compte.html">Espace client</a>
+  <a href="panier.html">Panier</a>
+</div>
+
+<div id="sw-detail-root">
+
+  <section class="sw-hero">
+    <div class="wrap">
+      <div>
+        <p class="cat" id="sw-cat">Outils & Logiciels</p>
+        <h1 id="sw-title">Chargement…</h1>
+        <p class="slogan" id="sw-slogan"></p>
+        <div class="cta-row">
+          <a href="#sw-plans-section" class="btn btn-primary">Acheter maintenant</a>
+          <a href="#" id="sw-demo-btn" class="btn btn-ghost">Demander une démonstration</a>
+        </div>
+      </div>
+      <div class="cover"><img id="sw-cover" src="img/brand/logo.png" alt=""></div>
+    </div>
+  </section>
+
+  <section class="page-section" style="padding-top:0">
+    <div class="wrap" style="max-width:820px; text-align:left">
+      <div id="sw-presentation"></div>
+    </div>
+  </section>
+
+  <section class="page-section" style="padding-top:0" id="sw-tech-section">
+    <div class="wrap">
+      <div class="sw-section-title"><h2>Informations techniques</h2></div>
+      <dl class="sw-tech" id="sw-tech"></dl>
+    </div>
+  </section>
+
+  <section class="page-section" style="padding-top:0" id="sw-screens-section">
+    <div class="wrap">
+      <div class="sw-section-title"><h2>Captures d'écran</h2></div>
+      <div class="sw-screens" id="sw-screens"></div>
+    </div>
+  </section>
+
+  <section class="page-section" style="padding-top:0" id="sw-video-section">
+    <div class="wrap">
+      <div class="sw-section-title"><h2>Démonstration vidéo</h2></div>
+      <div class="sw-video" id="sw-video"></div>
+    </div>
+  </section>
+
+  <section class="page-section" style="padding-top:0" id="sw-plans-section">
+    <div class="wrap">
+      <div class="sw-section-title">
+        <h2>Choisissez votre formule</h2>
+        <p style="color:var(--ink-soft)">L'administrateur définit librement les formules proposées pour ce logiciel.</p>
+      </div>
+      <div class="sw-plans" id="sw-plans"></div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <span class="f-brand"><img src="img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
+  <div class="f-socials">
+    <a href="#" id="f-instagram">Instagram</a>
+    <a href="#" id="f-facebook">Facebook</a>
+    <a href="index.html#contact">Contact</a>
+  </div>
+  <a href="#nav" class="to-top" aria-label="Retour en haut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg></a>
+</footer>
+
+<script src="js/site-data.js"></script>
+<script src="js/cart.js"></script>
+<script src="js/software.js"></script>
+<script>
+(function(){
+  var nav = document.getElementById("nav");
+  document.addEventListener("scroll", function(){ if(window.scrollY>40) nav.classList.add("scrolled"); }, {passive:true});
+  var toggle = document.getElementById("nav-toggle"), panel = document.getElementById("mobile-panel");
+  toggle.addEventListener("click", function(){ toggle.classList.toggle("open"); panel.classList.toggle("open"); });
+})();
+</script>
+<script src="js/okimbox.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# ============================================================
+# docker-compose.yml — PostgreSQL local pour développement / test
+# ============================================================
+# Usage :
+#   docker compose up -d
+#   cp .env.example .env   # puis DATABASE_URL=postgres://okimart:okimart@localhost:5432/okimart, PGSSL=false
+#   npm install
+#   npm start
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: okimart
+      POSTGRES_PASSWORD: okimart
+      POSTGRES_DB: okimart
+    ports:
+      - "5432:5432"
+    volumes:
+      - okimart_pg_data:/var/lib/postgresql/data
+
+volumes:
+  okimart_pg_data:
