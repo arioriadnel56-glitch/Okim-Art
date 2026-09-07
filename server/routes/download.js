@@ -28,12 +28,34 @@ router.get("/:token", async (req, res) => {
     // MIGRATION CLOUDINARY : le fichier n'est plus sur notre disque. On
     // génère une URL signée valable pour cet aller-retour et on redirige le
     // navigateur dessus — Cloudinary sert alors le fichier directement,
-    // sans jamais repasser par la RAM de notre serveur Express.
-    const ext = path.extname(product.fichier_original) || ".jpg";
-    const url = await signedPrivateUrl(product.fichier_original, `okim-art-${safeTitre}${ext}`, {
-      onRepair: (repairedRef) => db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
-    });
-    return res.redirect(url);
+   // Détection du fichier d'origine
+const originalFile = product.fichier_original || "";
+let ext = path.extname(originalFile).toLowerCase();
+
+// 1. Déterminer si le fichier est une vidéo ou une photo
+const isVideo = originalFile.includes('/video/') ||
+originalFile.endsWith('.mp4') ||
+(product.type && product.type.includes('video'));
+
+// 2. Assigner la bonne extension sans écraser les photos
+if (isVideo) {
+ext = ".mp4";
+} else if (!ext) {
+ext = ".jpg";
+}
+
+// 3. Nom final propre pour l'utilisateur
+const finalFilename = `${safeTitre}${ext}`;
+
+// 4. Génération de l'URL Cloudinary avec le bon nom de fichier et la bonne extension
+const url = await signedPrivateUrl(product.fichier_original, {
+attachment: true,
+filename: finalFilename
+});
+
+return res.redirect(url);
+
+
   }
 
   // Compatibilité ascendante : ancien chemin local (donnée antérieure à la
