@@ -5,7 +5,21 @@ const archiver = require("archiver");
 const path = require("path");
 const { db } = require("../db");
 const { PERSIST_ROOT } = require("./upload");
-const { isCloudinaryRef, openPrivateStream } = require("./cloudinaryStorage");
+const { isCloudinaryRef, openPrivateStream, parseRef } = require("./cloudinaryStorage");
+
+/**
+ * Détermine si une photo de séance est en réalité une vidéo. La référence
+ * Cloudinary (fixée une fois pour toutes à l'upload, via makeRef) est la
+ * source de vérité — jamais la colonne "type" seule, qui a une valeur par
+ * défaut ('photo') pouvant avoir mal étiqueté des lignes existantes lors
+ * d'une migration (voir db.js, correctif de données associé). On ne se
+ * rabat sur la colonne "type" que pour un ancien chemin local (pré-migration
+ * Cloudinary), où aucune référence de ce type n'existe.
+ */
+function isVideoMedia(p) {
+  if (isCloudinaryRef(p.file_path)) return parseRef(p.file_path).resourceType === "video";
+  return p.type === "video";
+}
 
 /** Ouvre un flux de lecture pour un fichier privé, qu'il soit sur Cloudinary (nouveau) ou sur disque local (ancien, compatibilité). */
 async function openReadStream(filePath, onRepair) {
@@ -24,7 +38,7 @@ async function openReadStream(filePath, onRepair) {
  * Diffuse un ZIP contenant les fichiers HD originaux d'une séance
  * directement dans la réponse HTTP, sans jamais écrire de fichier
  * temporaire sur le disque.
- * @param {{id:number, titre:string, file_path:string}[]} photos
+ * @param {{id:number, titre:string, file_path:string, type:string}[]} photos
  * @param {string} zipFilename
  * @param {import('http').ServerResponse} res
  */
@@ -42,7 +56,17 @@ async function streamSessionZip(photos, zipFilename, res) {
 
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
-    const ext = path.extname(p.file_path) || ".jpg";
+    // BUG CORRIGÉ : une référence Cloudinary ("cloudinary:video:169.../okimart/...")
+    // ne contient JAMAIS d'extension pour les photos/vidéos (contrairement aux
+    // fichiers logiciels, en "raw") — path.extname() y renvoyait donc toujours
+    // une chaîne vide, et TOUTES les vidéos du ZIP se retrouvaient nommées
+    // ".jpg" par le repli par défaut, alors que leur contenu était bien du
+    // MP4. Résultat : les vidéos, illisibles une fois extraites, semblaient
+    // "ignorées". L'extension doit venir du type réel de la photo en base,
+    // jamais du nom de fichier/référence.
+    // L'extension vient de la vraie nature du fichier (référence Cloudinary),
+    // jamais de la seule colonne "type" — voir isVideoMedia() ci-dessus.
+    const ext = isVideoMedia(p) ? ".mp4" : ".jpg";
     const safeTitre = (p.titre || `photo-${i + 1}`).replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || `photo-${i + 1}`;
     try {
       // onRepair réécrit la référence Cloudinary réparée (version retrouvée)

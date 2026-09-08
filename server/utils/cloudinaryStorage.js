@@ -159,22 +159,43 @@ async function signedPrivateUrl(ref, filename, { inline = false, onRepair } = {}
 /**
  * Ouvre un flux HTTPS lisible vers un asset PRIVÉ, en passant par notre
  * propre serveur (proxy en streaming, jamais bufferisé en RAM).
- * BUG CORRIGÉ : la visionneuse (<img>/<video>) affiche très bien un fichier
- * chargé via une redirection vers Cloudinary — un simple affichage ne
- * demande aucune autorisation CORS. Mais dès qu'on veut RÉCUPÉRER ce fichier
- * en JavaScript (fetch + blob, nécessaire pour le partage natif iOS "Save
- * Image/Video"), le navigateur applique les règles CORS sur la redirection
- * cross-origin vers res.cloudinary.com — et échoue silencieusement si
- * Cloudinary ne renvoie pas les en-têtes adéquats pour ce type d'asset
- * "authenticated". En proxyfiant nous-mêmes le flux d'octets, le fetch()
- * du navigateur reste sur notre propre domaine : plus aucun souci CORS.
+ * BUG CORRIGÉ (CORS) : la visionneuse (<img>/<video>) affiche très bien un
+ * fichier chargé via une redirection vers Cloudinary — un simple affichage
+ * ne demande aucune autorisation CORS. Mais dès qu'on veut RÉCUPÉRER ce
+ * fichier en JavaScript (fetch + blob, nécessaire pour le partage natif iOS
+ * "Save Image/Video"), le navigateur applique les règles CORS sur la
+ * redirection cross-origin vers res.cloudinary.com. En proxyfiant nous-mêmes
+ * le flux d'octets, le fetch() du navigateur reste sur notre propre
+ * domaine : plus aucun souci CORS.
+ * BUG CORRIGÉ (redirections) : `https.get()` de Node NE SUIT JAMAIS
+ * automatiquement les redirections HTTP (3xx) — contrairement à un
+ * navigateur ou à fetch(). Or Cloudinary sert souvent les vidéos (plus
+ * volumineuses) via une redirection vers son stockage sous-jacent, alors
+ * que les petites images sont plus souvent servies directement en 200. Sans
+ * ce correctif, toute vidéo dont la livraison passe par une redirection
+ * échouait silencieusement ("Cloudinary a répondu 302"), alors que les
+ * photos fonctionnaient normalement — exactement le symptôme observé.
  */
-async function openPrivateStream(ref, { onRepair } = {}) {
-  const url = await signedPrivateUrl(ref, null, { inline: true, onRepair });
+function openPrivateStream(ref, { onRepair } = {}) {
+  return signedPrivateUrl(ref, null, { inline: true, onRepair }).then((url) => fetchFollowingRedirects(url));
+}
+
+/** Suit une vraie chaîne de redirections (pas un seul saut) — https.get() de Node n'en suit aucune nativement. */
+function fetchFollowingRedirects(url, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
-      if (res.statusCode >= 200 && res.statusCode < 300) return resolve(res);
-      reject(new Error(`Cloudinary a répondu ${res.statusCode}`));
+      const { statusCode, headers } = res;
+      if (statusCode >= 300 && statusCode < 400 && headers.location) {
+        res.resume(); // vide la réponse en cours pour libérer la connexion
+        if (redirectsLeft <= 0) return reject(new Error("Trop de redirections lors de la récupération du fichier."));
+        // new URL(location, url) gère aussi bien une redirection en URL
+        // absolue (cas Cloudinary habituel) qu'en URL relative (rare, mais
+        // techniquement valide en HTTP).
+        const nextUrl = new URL(headers.location, url).toString();
+        return resolve(fetchFollowingRedirects(nextUrl, redirectsLeft - 1));
+      }
+      if (statusCode >= 200 && statusCode < 300) return resolve(res);
+      reject(new Error(`Cloudinary a répondu ${statusCode}`));
     }).on("error", reject);
   });
 }

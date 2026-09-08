@@ -14,7 +14,7 @@ const { signToken, requireGalleryAccess } = require("../middleware/auth");
 const { getSetting, addHours, hasHdAccess, getSessionByToken } = require("../utils/gallery");
 const { streamSessionZip } = require("../utils/zip");
 const { PERSIST_ROOT } = require("../utils/upload");
-const { isCloudinaryRef, signedPrivateUrl, openPrivateStream } = require("../utils/cloudinaryStorage");
+const { isCloudinaryRef, signedPrivateUrl, openPrivateStream, parseRef } = require("../utils/cloudinaryStorage");
 
 const router = express.Router();
 
@@ -76,7 +76,7 @@ router.get("/:token/download", requireGalleryAccess, async (req, res) => {
   if (!hasHdAccess(session)) {
     return res.status(403).json({ error: "Accès HD expiré ou non débloqué. Utilisez « Récupérer mes photos » pour y accéder à nouveau." });
   }
-  const photos = await db.prepare("SELECT id, titre, file_path FROM session_photos WHERE session_id = ?").all(session.id);
+  const photos = await db.prepare("SELECT id, titre, file_path, type FROM session_photos WHERE session_id = ?").all(session.id);
   if (!photos.length) return res.status(404).json({ error: "Aucune photo dans cette séance." });
   const safeName = (session.client_name || "seance").replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "seance";
   streamSessionZip(photos, `okim-art-${safeName}.zip`, res).catch((e) => {
@@ -173,17 +173,21 @@ router.get("/:token/photos/:photoId/download", requireGalleryAccess, async (req,
   if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
 
   const safeTitre = (photo.titre || (photo.type === "video" ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-");
-  const defaultExt = photo.type === "video" ? ".mp4" : ".jpg";
+  // L'extension vient de la vraie nature du fichier (référence Cloudinary),
+  // jamais de la seule colonne "type" en base — voir le correctif de
+  // données dans db.js : cette colonne avait une valeur par défaut ('photo')
+  // qui a pu mal étiqueter de vraies vidéos uploadées avant son ajout.
+  const ext = isCloudinaryRef(photo.file_path)
+    ? (parseRef(photo.file_path).resourceType === "video" ? ".mp4" : ".jpg")
+    : (photo.type === "video" ? ".mp4" : ".jpg");
 
   if (isCloudinaryRef(photo.file_path)) {
-    const ext = path.extname(photo.file_path) || defaultExt;
     const url = await signedPrivateUrl(photo.file_path, `okim-art-${safeTitre}${ext}`, { onRepair: repairSessionPhotoRef(photo.id) });
     return res.redirect(url);
   }
 
   // Compatibilité ascendante : ancien chemin local (donnée antérieure à la migration Cloudinary).
   const fullPath = path.join(PERSIST_ROOT, photo.file_path);
-  const ext = path.extname(fullPath) || defaultExt;
   res.download(fullPath, `okim-art-${safeTitre}${ext}`, (err) => {
     if (err && !res.headersSent) {
       res.status(404).json({ error: "Ce fichier n'est plus disponible. Contactez le support." });
@@ -230,11 +234,32 @@ router.post("/:token/kkiapay-confirm", requireGalleryAccess, async (req, res) =>
   const hdHours = Number(await getSetting("gallery_hd_access_hours", "48"));
   const unlockedUntil = addHours(new Date(), hdHours).toISOString();
 
-  await db.prepare(`
-    INSERT INTO recovery_transactions (session_id, transaction_reference, amount, status)
-    VALUES (?,?,?, 'success')
-    ON CONFLICT(transaction_reference) DO UPDATE SET status = 'success'
-  `).run(session.id, transactionId, event.amount ?? session.recovery_price);
+  // FAILLE CORRIGÉE (rejeu de transaction — même défaut que celui déjà
+  // corrigé sur les commandes boutique, voir routes/kkiapay.js) : la
+  // contrainte UNIQUE sur transaction_reference existe déjà en base, mais
+  // "ON CONFLICT DO UPDATE" l'ignorait complètement — un même transactionId
+  // "success" pouvait donc débloquer l'accès HD de N'IMPORTE QUELLE AUTRE
+  // séance utilisant le même tarif de récupération, sans repayer. On tente
+  // maintenant une insertion simple ; en cas de conflit, on vérifie que la
+  // transaction appartient bien À CETTE séance avant de continuer.
+  try {
+    await db.prepare(`
+      INSERT INTO recovery_transactions (session_id, transaction_reference, amount, status)
+      VALUES (?,?,?, 'success')
+    `).run(session.id, transactionId, event.amount ?? session.recovery_price);
+  } catch (e) {
+    if (e.code === "23505") {
+      const existing = await db.prepare("SELECT session_id FROM recovery_transactions WHERE transaction_reference = ?").get(transactionId);
+      if (!existing || existing.session_id !== session.id) {
+        return res.status(409).json({ error: "Cette transaction a déjà été utilisée pour une autre galerie. Contactez OKIM ART si vous pensez qu'il s'agit d'une erreur." });
+      }
+      // Même transaction, même séance : nouvelle tentative légitime (ex.
+      // rechargement de page après un premier succès) — on continue.
+      await db.prepare("UPDATE recovery_transactions SET status = 'success' WHERE transaction_reference = ? AND session_id = ?").run(transactionId, session.id);
+    } else {
+      throw e;
+    }
+  }
 
   await db.prepare("UPDATE sessions_photo SET hd_unlocked_until = ? WHERE id = ?").run(unlockedUntil, session.id);
 

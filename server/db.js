@@ -517,6 +517,21 @@ async function runMigrations() {
   await ensureColumn("session_photos", "type", "type TEXT NOT NULL DEFAULT 'photo'");
   await pool.query(`ALTER TABLE session_photos ALTER COLUMN watermark_path DROP NOT NULL`);
 
+  // CORRECTIF DE DONNÉES : la ligne ci-dessus ajoute "type" avec
+  // DEFAULT 'photo' — au moment de cette migration, TOUTES les lignes déjà
+  // en base (y compris de vraies vidéos uploadées avant l'existence de cette
+  // colonne) ont donc été rétroactivement étiquetées 'photo', quel que soit
+  // leur contenu réel. Conséquence concrète : le bouton "Télécharger le ZIP"
+  // et le téléchargement individuel se fiaient à cette colonne pour choisir
+  // l'extension du fichier (.mp4 vs .jpg) — une vraie vidéo mal étiquetée se
+  // retrouvait donc systématiquement renommée ".jpg", illisible une fois
+  // téléchargée. On corrige ici les lignes dont la référence Cloudinary dit
+  // clairement "video" mais dont la colonne affirme autre chose — la
+  // référence est la source de vérité (fixée à l'upload, jamais sujette à
+  // une valeur par défaut de colonne).
+  await pool.query(`UPDATE session_photos SET type = 'video' WHERE file_path LIKE 'cloudinary:video:%' AND type <> 'video'`);
+  await pool.query(`UPDATE session_photos SET type = 'photo' WHERE file_path LIKE 'cloudinary:image:%' AND type <> 'photo'`);
+
   // Notification "licence bientôt expirée" envoyée une seule fois par licence.
   await ensureColumn("licenses", "expiry_notified", "expiry_notified INTEGER NOT NULL DEFAULT 0");
 
