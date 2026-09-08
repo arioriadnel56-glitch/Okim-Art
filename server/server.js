@@ -54,6 +54,16 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Interdit l'accès caméra/micro/géolocalisation par défaut — le site n'en
+  // a besoin nulle part ; réduit la surface d'attaque si un script tiers
+  // (widget KKiaPay, etc.) était un jour compromis.
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  // HSTS : force le navigateur à toujours utiliser HTTPS pour ce domaine,
+  // même si quelqu'un tape/partage un lien en http:// par erreur. Seulement
+  // en production (Render sert bien du HTTPS) — inutile et gênant en local.
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
   next();
 });
 
