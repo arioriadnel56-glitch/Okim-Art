@@ -195,7 +195,161 @@
   // se heurte aux règles CORS et échouait silencieusement (d'où l'alerte
   // d'erreur). /blob fait transiter les octets par notre propre serveur :
   // le fetch() reste sur notre domaine, plus aucun souci CORS.
-  function saveMedia(id, type, titre) {
-// Redirection directe vers la route backend
-window.location.href = "/api/download/" + token;
-}
+  async function saveMedia(id, type, titre){
+    var ext = type === "video" ? "mp4" : "jpg";
+    var filename = "okim-art-" + (titre || type).replace(/[^a-z0-9]+/gi, "-") + "." + ext;
+    try {
+      var res = await fetch(blobUrl(id));
+      if (!res.ok) throw new Error("Le fichier n'a pas pu être récupéré (code " + res.status + ").");
+      var blob = await res.blob();
+      var file = new File([blob], filename, { type: blob.type || (type === "video" ? "video/mp4" : "image/jpeg") });
+
+      // 1) Partage natif (iOS/Android récents) : propose "Enregistrer
+      // l'image/la vidéo" directement dans le menu de partage du système.
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+
+      // 2) Repli : téléchargement classique via un lien temporaire (fonctionne
+      // bien sur ordinateur et sur la plupart des navigateurs Android).
+      // BUG CORRIGÉ : cette variable s'appelait "blobUrl", exactement comme la
+      // fonction blobUrl() définie plus haut dans ce fichier. À cause du
+      // hoisting de "var", cette déclaration locale masquait la fonction dans
+      // TOUTE la fonction saveMedia — y compris à la ligne "fetch(blobUrl(id))"
+      // plus haut, qui plantait donc systématiquement avec "blobUrl is not a
+      // function", et ce depuis le tout début (avant même le correctif CORS).
+      var objectUrl = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = objectUrl; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(objectUrl); }, 15000);
+    } catch (e) {
+      // On n'affiche JAMAIS une page d'erreur : soit l'utilisateur a
+      // simplement annulé le partage (AbortError, à ignorer silencieusement),
+      // soit on informe proprement dans la page.
+      if (e && e.name === "AbortError") return;
+      alert("Impossible d'enregistrer ce fichier pour le moment : " + e.message);
+    }
+  }
+
+  document.getElementById("photo-grid").addEventListener("click", function(e){
+    var saveBtn = e.target.closest("[data-save-id]");
+    if (saveBtn) {
+      saveMedia(saveBtn.getAttribute("data-save-id"), saveBtn.getAttribute("data-save-type"), saveBtn.getAttribute("data-save-titre"));
+      return;
+    }
+    var fig = e.target.closest("figure[data-clickable]");
+    if (!fig) return;
+    openLightbox(fig.getAttribute("data-id"), fig.getAttribute("data-type"), fig.getAttribute("data-titre"));
+  });
+  document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+  document.getElementById("lightbox").addEventListener("click", function(e){
+    if (e.target.id === "lightbox") closeLightbox();
+  });
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape") closeLightbox();
+  });
+
+  // ---------- Saisie du PIN ----------
+  document.getElementById("pin-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("pin-error");
+    err.classList.remove("show");
+    fetch("/api/gallery/" + encodeURIComponent(token) + "/verify-pin", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: document.getElementById("pin-input").value })
+    }).then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
+      .then(function(res){
+        if (res.status !== 200) throw new Error(res.data.error || "Code PIN incorrect.");
+        galleryJwt = res.data.token;
+        showGallery(res.data.session, res.data.photos);
+      })
+      .catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
+  });
+
+  // ---------- Téléchargement ZIP (nécessite l'en-tête Authorization → fetch + blob) ----------
+  document.getElementById("download-btn").addEventListener("click", function(){
+    var btn = this;
+    var original = btn.textContent;
+    btn.textContent = "Préparation de l'archive…";
+    btn.disabled = true;
+    fetch("/api/gallery/" + encodeURIComponent(token) + "/download", { headers: authHeaders() })
+      .then(function(r){
+        if (!r.ok) return r.json().then(function(d){ throw new Error(d.error || "Téléchargement impossible."); });
+        return r.blob();
+      })
+      .then(function(blob){
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url; a.download = "okim-art-photos.zip";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+      })
+      .catch(function(e2){ alert(e2.message); })
+      .finally(function(){ btn.textContent = original; btn.disabled = false; });
+  });
+
+  // ---------- Récupération payante (KKiaPay) ----------
+  document.getElementById("recover-btn").addEventListener("click", function(){
+    var btn = this;
+    fetch("/api/gallery/" + encodeURIComponent(token) + "/recover", { method: "POST", headers: authHeaders() })
+      .then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
+      .then(function(res){
+        if (res.status !== 200) throw new Error(res.data.error || "Récupération indisponible pour le moment.");
+        if (res.data.already_unlocked) { window.location.reload(); return; }
+        if (!window.openKkiapayWidget) throw new Error("Le module de paiement n'a pas pu se charger. Réessayez dans un instant.");
+        window.openKkiapayWidget({
+          amount: res.data.amount,
+          key: res.data.kkiapay.public_key,
+          sandbox: res.data.kkiapay.sandbox,
+          data: res.data.reference,
+          position: "center"
+        });
+        if (window.addSuccessListener) {
+          window.addSuccessListener(function(response){
+            confirmRecoveryPayment(response && response.transactionId, 0);
+          });
+        }
+      })
+      .catch(function(e2){ alert(e2.message); });
+  });
+
+  function confirmRecoveryPayment(transactionId, attempt){
+    if (!transactionId) return;
+    document.getElementById("recover-btn").style.display = "none";
+    document.getElementById("recovery-verifying").style.display = "block";
+    document.getElementById("recovery-error").style.display = "none";
+
+    fetch("/api/gallery/" + encodeURIComponent(token) + "/kkiapay-confirm", {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ transactionId: transactionId })
+    }).then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
+      .then(function(res){
+        if (res.status === 200 && res.data.ok) {
+          window.location.reload(); // recharge la galerie avec l'accès HD débloqué
+        } else if (res.status === 202 && attempt < 8) {
+          setTimeout(function(){ confirmRecoveryPayment(transactionId, attempt + 1); }, 3000);
+        } else {
+          document.getElementById("recovery-verifying").style.display = "none";
+          var err = document.getElementById("recovery-error");
+          err.textContent = res.data.error || "Vérification impossible pour le moment. Réessayez dans un instant.";
+          err.style.display = "block";
+          document.getElementById("recover-btn").style.display = "inline-flex";
+        }
+      })
+      .catch(function(){
+        document.getElementById("recovery-verifying").style.display = "none";
+        var err = document.getElementById("recovery-error");
+        err.textContent = "Erreur réseau pendant la vérification.";
+        err.style.display = "block";
+        document.getElementById("recover-btn").style.display = "inline-flex";
+      });
+  }
+
+  var nav = document.getElementById("nav");
+  document.addEventListener("scroll", function(){ if (window.scrollY > 40) nav.classList.add("scrolled"); }, { passive: true });
+})();
+</script>
+</body>
+</html>
