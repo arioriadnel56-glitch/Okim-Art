@@ -1066,8 +1066,13 @@
   });
 
   const SESSION_STATUT_LABEL = { active: "Active", archived: "Archivée" };
+  let sessionsCache = [];
   async function loadSessions() {
     const { sessions } = await api("/sessions");
+    sessionsCache = sessions;
+    renderSessions(sessionsCache);
+  }
+  function renderSessions(sessions) {
     const tbody = document.querySelector("#table-sessions tbody");
     tbody.innerHTML = sessions.length ? sessions.map((s) => `
       <tr>
@@ -1081,7 +1086,7 @@
           <button class="admin-icon-btn" data-regen="${s.id}">Nouveau PIN</button>
           <button class="admin-icon-btn danger" data-del="${s.id}">Supprimer</button>
         </td>
-      </tr>`).join("") : `<tr><td colspan="6" class="admin-table-empty">Aucune séance créée.</td></tr>`;
+      </tr>`).join("") : `<tr><td colspan="6" class="admin-table-empty">${sessions === sessionsCache ? "Aucune séance créée." : "Aucune séance ne correspond à cette recherche."}</td></tr>`;
 
     tbody.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copié ✓"; setTimeout(() => b.textContent = "Copier le lien", 1200); }
@@ -1099,6 +1104,23 @@
       try { await api("/sessions/" + b.dataset.del, { method: "DELETE" }); await loadSessions(); await loadDashboard(); }
       catch (err) { alert(err.message); }
     }));
+  }
+  const sessionSearchInput = document.getElementById("session-search");
+  // Recherche insensible aux accents : sur un clavier de téléphone, on tape
+  // souvent "aicha" sans réfléchir à l'accent de "Aïcha" — sans cette
+  // normalisation, la recherche ne trouverait jamais ce genre de nom.
+  function normalizeSearch(s) {
+    return (s || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  }
+  if (sessionSearchInput) {
+    sessionSearchInput.addEventListener("input", () => {
+      const q = normalizeSearch(sessionSearchInput.value.trim());
+      if (!q) { renderSessions(sessionsCache); return; }
+      renderSessions(sessionsCache.filter((s) =>
+        normalizeSearch(s.client_name).includes(q) ||
+        normalizeSearch(s.client_phone).includes(q)
+      ));
+    });
   }
 
   /* ================= LOGICIELS ================= */
