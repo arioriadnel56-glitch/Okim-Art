@@ -204,25 +204,41 @@
 }
 .gallery-grid img{ width:100%; height:100%; object-fit:cover; display:block; }
 .gallery-video-card{
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:.6rem; padding:1rem; text-align:center;
+  /* Se comporte maintenant comme une carte photo (aperçu plein cadre) —
+     BUG CORRIGÉ : avant, une vidéo n'affichait jamais qu'une icône
+     générique centrée, jamais un vrai aperçu comme les photos. */
   background:var(--paper-soft);
 }
-.gv-icon{
-  width:44px; height:44px; border-radius:50%;
+.gv-thumb{ background:var(--paper-soft); }
+.gv-play{
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:1;
+  width:46px; height:46px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  background:var(--white); border:1px solid var(--line); color:var(--indigo);
+  background:rgba(20,26,48,.6); color:var(--white); backdrop-filter:blur(2px);
+  pointer-events:none; /* le clic doit atteindre la figure, pas ce badge */
 }
-.gv-icon svg{ width:20px; height:20px; }
-.gallery-video-card figcaption{ font-size:.8rem; color:var(--ink-soft); }
-.gallery-video-card figcaption small{ font-family:var(--mono); font-size:.66rem; letter-spacing:.03em; }
+.gv-play svg{ width:18px; height:18px; margin-left:2px; } /* léger décalage optique du triangle "play" */
+/* Repli si la vignette échoue à charger (voir le gestionnaire "error" en JS) —
+   reprend l'ancien style d'icône générique, centré dans le cadre carré. */
+.gv-icon-fallback{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  color:var(--indigo);
+}
+.gv-icon-fallback svg{ width:32px; height:32px; }
+.gallery-video-card figcaption{
+  position:absolute; left:0; right:0; bottom:0; z-index:2;
+  padding:1.6rem .7rem .5rem; text-align:left;
+  background:linear-gradient(to top, rgba(20,26,48,.75), transparent);
+  font-size:.78rem; color:var(--white);
+}
+.gallery-video-card figcaption small{ font-family:var(--mono); font-size:.64rem; letter-spacing:.03em; opacity:.85; }
 .gallery-actions{ text-align:center; margin-top:1rem; }
 
 /* Bouton de téléchargement individuel — posé en overlay sur chaque photo
    (visible uniquement quand l'accès HD est débloqué). Volontairement discret
    (cercle semi-transparent) pour ne pas gêner l'aperçu de la photo. */
 .gallery-dl{
-  position:absolute; right:.5rem; bottom:.5rem; z-index:2;
+  position:absolute; right:.5rem; bottom:.5rem; z-index:3;
   width:34px; height:34px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
   background:rgba(20,26,48,.72); color:var(--white);
@@ -231,10 +247,6 @@
 }
 .gallery-dl:hover{ background:var(--indigo-deep); transform:scale(1.06); }
 .gallery-dl svg{ width:16px; height:16px; }
-.gallery-video-card .gallery-dl{
-  position:static; margin-top:.2rem; width:auto; height:auto; border-radius:100px;
-  padding:.4rem .9rem; gap:.4rem; background:var(--indigo); font-size:.78rem; font-weight:500;
-}
 .gallery-hint{
   max-width:640px; margin:-1rem auto 1.6rem; text-align:center;
   font-size:.82rem; color:var(--ink-soft);

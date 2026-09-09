@@ -128,6 +128,14 @@
     }
 
     var dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5"/><path d="M4 19h16"/></svg>';
+    var playIcon = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+
+    // URL de la vignette vidéo (frame extraite côté serveur par Cloudinary —
+    // voir GET /:token/photos/:photoId/thumbnail). Visible même séance
+    // verrouillée, comme l'aperçu filigrané d'une photo.
+    function thumbnailUrl(photoId){
+      return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/thumbnail?auth=" + encodeURIComponent(galleryJwt);
+    }
 
     document.getElementById("photo-grid").innerHTML = photos.map(function(p){
       // BUG CORRIGÉ : un <a href download> qui navigue directement vers
@@ -137,19 +145,41 @@
       // toute erreur est désormais interceptée et affichée proprement,
       // JAMAIS une page d'erreur du navigateur. Voir saveMedia() plus bas.
       var dlBtn = session.has_hd_access
-        ? '<button type="button" class="gallery-dl" data-save-id="' + p.id + '" data-save-type="' + p.type + '" data-save-titre="' + esc(p.titre || "") + '" title="Enregistrer">' + dlIcon + (p.type === "video" ? " Enregistrer" : "") + '</button>'
+        ? '<button type="button" class="gallery-dl" data-save-id="' + p.id + '" data-save-type="' + p.type + '" data-save-titre="' + esc(p.titre || "") + '" title="Enregistrer">' + dlIcon + '</button>'
         : "";
       var clickable = session.has_hd_access ? ' data-clickable' : '';
       var dataAttrs = ' data-id="' + p.id + '" data-type="' + p.type + '" data-titre="' + esc(p.titre || "") + '"';
       if (p.type === "video") {
+        // BUG CORRIGÉ : la grille n'affichait jamais qu'une icône générique
+        // grise pour une vidéo, jamais un vrai aperçu — contrairement aux
+        // photos — même une fois l'accès HD débloqué. La route /thumbnail
+        // existait déjà côté serveur mais n'était jamais appelée ici. En cas
+        // d'échec de chargement (ancien fichier local, vidéo corrompue...),
+        // un gestionnaire dédié (voir plus bas, événement "error" en phase de
+        // capture) bascule automatiquement vers l'icône générique de secours.
         return '<figure class="gallery-video-card"' + dataAttrs + clickable + '>' +
-          '<span class="gv-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h11v12H4z"/><path d="M15 10l5-3v10l-5-3"/></svg></span>' +
+          '<img class="gv-thumb" src="' + thumbnailUrl(p.id) + '" alt="' + esc(p.titre || "Vidéo") + '" loading="lazy">' +
+          '<span class="gv-play" aria-hidden="true">' + playIcon + '</span>' +
           '<figcaption>' + esc(p.titre || "Vidéo") + (session.has_hd_access ? '' : '<br><small>Vidéo verrouillée</small>') + '</figcaption>' +
           dlBtn +
         '</figure>';
       }
       return '<figure' + dataAttrs + clickable + '><img src="' + esc(p.watermark_path) + '" alt="' + esc(p.titre || "Photo") + '" loading="lazy">' + dlBtn + '</figure>';
     }).join("");
+
+    // Repli propre si une vignette vidéo échoue à charger (ancien fichier
+    // local pré-migration, vidéo corrompue...) : icône générique à la place.
+    // Les événements "error" sur <img> ne remontent pas (pas de bubbling) —
+    // on écoute donc en phase de capture, une seule fois pour toute la grille.
+    document.getElementById("photo-grid").addEventListener("error", function(e){
+      var img = e.target;
+      if (!img.classList || !img.classList.contains("gv-thumb")) return;
+      var span = document.createElement("span");
+      span.className = "gv-icon-fallback";
+      span.setAttribute("aria-hidden", "true");
+      span.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h11v12H4z"/><path d="M15 10l5-3v10l-5-3"/></svg>';
+      img.replaceWith(span);
+    }, true);
   }
 
   // ---------- Visionneuse plein écran ----------
