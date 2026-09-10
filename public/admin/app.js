@@ -1046,9 +1046,25 @@
   }
   const sessionDZ = wireMultiDropzone();
 
+  // wa.me exige un numéro complet au format international (indicatif pays +
+  // numéro, chiffres uniquement, sans "+" ni espaces). Les numéros béninois
+  // sont généralement saisis localement (8 chiffres, ex. "97xxxxxx") sans
+  // l'indicatif 229 — on le rajoute automatiquement dans ce cas précis.
+  // Pour tout autre format (déjà avec indicatif, ou un numéro étranger), on
+  // se contente de retirer les caractères non numériques, sans rien deviner
+  // de plus.
+  function normalizePhoneForWhatsapp(raw) {
+    const digits = (raw || "").replace(/[^\d]/g, "");
+    if (!digits) return null;
+    if (digits.length === 8) return "229" + digits; // numéro béninois local, sans indicatif
+    if (digits.startsWith("229") || digits.length > 8) return digits; // déjà avec indicatif (ou international)
+    return digits; // repli : au moins tenter avec ce qui a été saisi
+  }
+
   function openSessionPanel() {
     document.getElementById("form-session").style.display = "block";
     document.getElementById("session-created-panel").style.display = "none";
+    document.getElementById("session-created-whatsapp").style.display = "none";
     document.getElementById("form-session").reset();
     sessionDZ.reset();
     document.getElementById("panel-session").classList.add("open");
@@ -1081,6 +1097,24 @@
       document.getElementById("session-created-panel").style.display = "block";
       document.getElementById("session-created-link").value = r.session.link;
       document.getElementById("session-created-pin").value = r.pin;
+
+      // Lien WhatsApp pré-rempli avec le lien de la galerie et le code PIN —
+      // "le premier code d'ouverture" : ce PIN n'est affiché qu'une seule
+      // fois (voir le commentaire du panneau), donc ce bouton n'a de sens
+      // qu'à cet instant précis, juste après la création de la séance.
+      const waBtn = document.getElementById("session-created-whatsapp");
+      const clientName = document.getElementById("session-client-name").value.trim();
+      const phoneDigits = normalizePhoneForWhatsapp(document.getElementById("session-client-phone").value);
+      if (phoneDigits) {
+        const message = `Bonjour ${clientName || ""},\n\nVoici l'accès à vos photos et vidéos OKIM ART :\n\n📷 Galerie : ${r.session.link}\n🔑 Code PIN : ${r.pin}\n\nCe code est personnel, merci de ne pas le partager.\n\nÀ bientôt !`;
+        waBtn.href = "https://wa.me/" + phoneDigits + "?text=" + encodeURIComponent(message);
+        waBtn.style.display = "inline-flex";
+      } else {
+        // Pas de numéro exploitable (champ vide ou format non reconnu) :
+        // le bouton reste caché plutôt que d'ouvrir WhatsApp sans destinataire.
+        waBtn.style.display = "none";
+      }
+
       await loadSessions();
       await loadDashboard();
     } catch (err) {
