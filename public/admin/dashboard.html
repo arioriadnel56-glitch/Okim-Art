@@ -578,6 +578,26 @@
       </div>
 
       <div class="admin-panel open">
+        <h3>Paiement — Mobile Money / carte (GeniusPay) <span class="admin-tag warn">En préparation</span></h3>
+        <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
+          Postulez sur <a href="https://onboarding.geniuspay.ci" target="_blank" rel="noopener">onboarding.geniuspay.ci</a> pour obtenir un compte marchand. Une fois validé, récupérez votre <strong>clé API</strong> et votre <strong>secret API</strong> dans votre tableau de bord GeniusPay et enregistrez-les ci-dessous. <strong>Le paiement effectif via GeniusPay n'est pas encore actif sur ce site</strong> — la vérification sécurisée des notifications de paiement (webhook) sera ajoutée dès que la documentation officielle sera disponible. Enregistrer vos clés ici les met simplement de côté, prêtes pour cette prochaine étape.
+        </p>
+        <form id="form-geniuspay">
+          <div class="admin-grid-2">
+            <div class="admin-field">
+              <label><input type="checkbox" id="gp-enabled" style="width:auto; margin-right:.4rem" disabled>Activer le paiement en ligne GeniusPay (bientôt)</label>
+            </div>
+            <div class="admin-field">
+              <label><input type="checkbox" id="gp-sandbox" style="width:auto; margin-right:.4rem">Mode test (sandbox) — à décocher une fois le compte GeniusPay validé en production</label>
+            </div>
+            <div class="admin-field"><label>Clé API GeniusPay (X-API-Key)</label><input type="text" id="gp-api-key" placeholder="pk_live_... ou pk_test_..."></div>
+            <div class="admin-field"><label>Secret API GeniusPay (X-API-Secret)</label><input type="password" id="gp-api-secret" placeholder="sk_live_... ou sk_test_..."></div>
+          </div>
+          <div class="admin-panel-actions"><button type="submit" class="btn btn-primary">Enregistrer les clés</button></div>
+        </form>
+      </div>
+
+      <div class="admin-panel open">
         <h3>Assistant IA — okim.box</h3>
         <p style="font-size:.82rem; color:var(--admin-muted,#8a8577); margin:0 0 1rem">
           Un assistant conversationnel affiché sur le site public, qui répond aux questions des visiteurs à partir des informations réelles et actuelles du site (services, boutique, formations, logiciels) — jamais d'information inventée. Nécessite une clé API <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Quand l'assistant ne peut pas répondre (réclamation, remboursement, question hors périmètre), la conversation est automatiquement transférée dans vos Messages.

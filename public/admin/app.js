@@ -771,6 +771,31 @@
     } catch (err) { alert(err.message); }
   });
 
+  // GeniusPay : en préparation, voir le commentaire du formulaire dans
+  // dashboard.html — seules les clés sont enregistrées pour l'instant, la
+  // case "Activer" reste désactivée tant que la route de paiement et la
+  // vérification du webhook n'ont pas été construites.
+  async function loadGeniuspay() {
+    const cfg = await api("/settings/geniuspay");
+    document.getElementById("gp-sandbox").checked = cfg.sandbox;
+    document.getElementById("gp-api-key").placeholder = cfg.api_key_configured ? "Clé déjà enregistrée — laisser vide pour ne pas la changer" : "pk_live_... ou pk_test_...";
+    document.getElementById("gp-api-secret").placeholder = cfg.api_secret_configured ? "Secret déjà enregistré — laisser vide pour ne pas le changer" : "sk_live_... ou sk_test_...";
+  }
+  document.getElementById("form-geniuspay").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await apiJson("/settings/geniuspay", "PUT", {
+        sandbox: document.getElementById("gp-sandbox").checked,
+        api_key: document.getElementById("gp-api-key").value,
+        api_secret: document.getElementById("gp-api-secret").value
+      });
+      document.getElementById("gp-api-key").value = "";
+      document.getElementById("gp-api-secret").value = "";
+      alert("Clés GeniusPay enregistrées. Le paiement effectif sera activé dans une prochaine mise à jour, une fois la documentation webhook intégrée.");
+      await loadGeniuspay();
+    } catch (err) { alert(err.message); }
+  });
+
   async function loadNotify() {
     const cfg = await api("/settings/notifications");
     ["smtp_host","smtp_port","smtp_user","smtp_from_name","smtp_from_email","notify_webhook_url"].forEach((k) => {
@@ -1427,7 +1452,7 @@
     try {
       await Promise.all([loadDashboard(), loadCategoriesIntoSelect(), loadAdminNotifications()]);
       await loadAdminProfile();
-      await Promise.all([loadPhotos(), loadCategories(), loadServices(), loadFormations(), loadProducts(), loadOrders(), loadMessages(), loadTestimonials(), loadTrash(), loadSessions(), loadSettings(), loadKkiapay(), loadNotify(), loadAssistant(), loadAdmins(), loadSoftwareList(), loadLicenses()]);
+      await Promise.all([loadPhotos(), loadCategories(), loadServices(), loadFormations(), loadProducts(), loadOrders(), loadMessages(), loadTestimonials(), loadTrash(), loadSessions(), loadSettings(), loadKkiapay(), loadGeniuspay(), loadNotify(), loadAssistant(), loadAdmins(), loadSoftwareList(), loadLicenses()]);
       await loadSoftwareCategorySelect();
       // Rafraîchit la cloche de notifications en tâche de fond, sans
       // recharger toutes les autres sections (léger, appel unique).

@@ -90,6 +90,37 @@ router.post("/kkiapay/clear-cache", async (req, res) => {
   res.json({ ok: true, count: info.changes });
 });
 
+// ---------- Paiement GeniusPay (Mobile Money / carte) — EN PRÉPARATION ----------
+// Seules les clés API sont stockées pour l'instant (chiffrées, jamais
+// renvoyées en clair — comme le mot de passe SMTP ci-dessous). La route de
+// paiement effective et la vérification du webhook seront ajoutées une fois
+// la documentation officielle GeniusPay obtenue (compte marchand actuellement
+// en liste d'attente — voir onboarding.geniuspay.ci). "enabled" reste
+// volontairement forcé à false : impossible d'activer un paiement qui ne
+// sait pas encore vérifier ses propres confirmations de paiement.
+router.get("/geniuspay", async (req, res) => {
+  const row = await db.prepare("SELECT valeur FROM settings WHERE cle = 'geniuspay_sandbox'").get();
+  res.json({
+    enabled: false,
+    sandbox: !row || row.valeur !== "0",
+    api_key_configured: !!(await getSecureSetting("geniuspay_api_key")),
+    api_secret_configured: !!(await getSecureSetting("geniuspay_api_secret"))
+  });
+});
+
+router.put("/geniuspay", async (req, res) => {
+  const { sandbox, api_key, api_secret } = req.body || {};
+  await db.prepare("INSERT INTO settings (cle, valeur) VALUES ('geniuspay_sandbox', ?) ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur")
+    .run(sandbox === false ? "0" : "1");
+  // Comme pour le mot de passe SMTP : un champ laissé vide ne doit jamais
+  // écraser une clé déjà enregistrée (le champ apparaît vide côté admin
+  // parce qu'on ne renvoie jamais la vraie valeur, pas parce qu'il n'y a
+  // rien à préserver).
+  if (api_key) await setSecureSetting("geniuspay_api_key", api_key);
+  if (api_secret) await setSecureSetting("geniuspay_api_secret", api_secret);
+  res.json({ ok: true });
+});
+
 // ---------- Notifications automatiques (e-mail + webhook générique) ----------
 const NOTIFY_KEYS = ["smtp_host", "smtp_port", "smtp_secure", "smtp_user", "smtp_pass", "smtp_from_name", "smtp_from_email", "notify_webhook_url"];
 
