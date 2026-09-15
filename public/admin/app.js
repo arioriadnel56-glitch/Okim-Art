@@ -1074,7 +1074,30 @@
   // tout l'envoi. Chaque lot est petit et rapide, donc plus fiable sur une
   // connexion mobile — et un lot qui échoue peut être rejoué sans perdre
   // ceux déjà envoyés.
-  const SESSION_BATCH_SIZE = 15;
+  const SESSION_BATCH_SIZE = 15; // plafond en NOMBRE de fichiers par lot
+  // Plafond en POIDS total par lot. Indispensable dès qu'il y a des
+  // vidéos : 15 photos ne pèsent presque rien, mais 15 vidéos peuvent
+  // atteindre plusieurs Go d'un coup (jusqu'à 200 Mo/vidéo), ce qui
+  // reproduirait le plantage mémoire déjà corrigé pour les photos. On
+  // arrête un lot dès que l'UN des deux plafonds (nombre OU poids) est
+  // atteint — donc un lot de vidéos contiendra automatiquement moins de
+  // 15 fichiers si besoin.
+  const SESSION_BATCH_MAX_BYTES = 150 * 1024 * 1024; // 150 Mo par lot
+
+  // Construit le prochain lot à envoyer à partir d'une liste de fichiers
+  // restants, en respectant les deux plafonds ci-dessus. Toujours au moins
+  // 1 fichier par lot (même s'il dépasse à lui seul 150 Mo), pour ne
+  // jamais bloquer l'envoi d'une vidéo particulièrement lourde.
+  function nextSessionBatch(files) {
+    const batch = [];
+    let bytes = 0;
+    for (const f of files) {
+      if (batch.length && (batch.length >= SESSION_BATCH_SIZE || bytes + f.size > SESSION_BATCH_MAX_BYTES)) break;
+      batch.push(f);
+      bytes += f.size;
+    }
+    return batch;
+  }
 
   // Conserve l'état d'un envoi en cours (séance déjà créée, nombre de
   // fichiers déjà envoyés) pour permettre une REPRISE si une requête
@@ -1160,13 +1183,15 @@
       // 2) Envoyer les fichiers par petits lots successifs, en reprenant
       // là où un éventuel envoi précédent s'était arrêté.
       const remaining = sessionFiles.slice(activeSessionUpload.sentCount);
-      for (let i = 0; i < remaining.length; i += SESSION_BATCH_SIZE) {
-        const batch = remaining.slice(i, i + SESSION_BATCH_SIZE);
+      let i = 0;
+      while (i < remaining.length) {
+        const batch = nextSessionBatch(remaining.slice(i));
         btn.textContent = `Envoi… (${activeSessionUpload.sentCount}/${sessionFiles.length})`;
         const fd = new FormData();
         batch.forEach((f) => fd.append("files", f));
         await apiForm(`/sessions/${activeSessionUpload.sessionId}/photos`, "POST", fd);
         activeSessionUpload.sentCount += batch.length;
+        i += batch.length;
       }
 
       // 3) Tous les fichiers sont passés : afficher le lien + PIN.
