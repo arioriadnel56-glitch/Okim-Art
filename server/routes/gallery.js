@@ -109,6 +109,15 @@ router.get("/:token/photos/:photoId/blob", requireGalleryAccess, async (req, res
     if (isCloudinaryRef(photo.file_path)) {
       const stream = await openPrivateStream(photo.file_path, { onRepair: repairSessionPhotoRef(photo.id) });
       res.setHeader("Content-Type", stream.headers["content-type"] || (photo.type === "video" ? "video/mp4" : "image/jpeg"));
+      // BUG CORRIGÉ : la taille totale du fichier (fournie par Cloudinary via
+      // content-length) n'était jamais retransmise au navigateur. Sans elle,
+      // le fetch() côté client (voir fetchWithProgress dans gallery.html) ne
+      // peut jamais calculer de vrai pourcentage et retombe systématiquement
+      // sur l'anneau de progression "indéterminé" (qui tourne sans jamais
+      // afficher de %) — exactement le symptôme observé.
+      if (stream.headers["content-length"]) {
+        res.setHeader("Content-Length", stream.headers["content-length"]);
+      }
       stream.pipe(res);
     } else {
       // Compatibilité ascendante : ancien chemin local.
