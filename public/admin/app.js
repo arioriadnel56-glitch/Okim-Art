@@ -1022,11 +1022,18 @@
     const previewWrap = document.getElementById("session-preview-wrap");
     const textEl = document.getElementById("session-dropzone-text");
 
+    // Au-delà de ce nombre, on arrête de générer des vignettes d'aperçu :
+    // avec 300 fichiers, créer 300 <img>/<video> + object URLs d'un coup
+    // fait ramer (voire planter) le navigateur, surtout sur mobile — le
+    // compteur textuel suffit largement pour confirmer la sélection.
+    const MAX_PREVIEW_THUMBS = 60;
     function render() {
-      previewWrap.innerHTML = sessionFiles.map((f) => f.type.startsWith("video/")
+      const toPreview = sessionFiles.slice(0, MAX_PREVIEW_THUMBS);
+      previewWrap.innerHTML = toPreview.map((f) => f.type.startsWith("video/")
         ? `<video src="${URL.createObjectURL(f)}" muted></video>`
         : `<img src="${URL.createObjectURL(f)}" alt="">`
-      ).join("");
+      ).join("") + (sessionFiles.length > MAX_PREVIEW_THUMBS
+        ? `<div class="session-preview-more">+${sessionFiles.length - MAX_PREVIEW_THUMBS}</div>` : "");
       const nbVideos = sessionFiles.filter((f) => f.type.startsWith("video/")).length;
       const nbPhotos = sessionFiles.length - nbVideos;
       textEl.textContent = sessionFiles.length
@@ -1061,12 +1068,32 @@
     return digits; // repli : au moins tenter avec ce qui a été saisi
   }
 
+  // Nombre de fichiers envoyés par requête. Une séance de 300 fichiers part
+  // donc en ~20 requêtes de 15 plutôt qu'une seule requête géante, qui
+  // faisait planter/timeout le serveur (Erreur serveur 502) et bloquait
+  // tout l'envoi. Chaque lot est petit et rapide, donc plus fiable sur une
+  // connexion mobile — et un lot qui échoue peut être rejoué sans perdre
+  // ceux déjà envoyés.
+  const SESSION_BATCH_SIZE = 15;
+
+  // Conserve l'état d'un envoi en cours (séance déjà créée, nombre de
+  // fichiers déjà envoyés) pour permettre une REPRISE si une requête
+  // échoue en cours de route (coupure réseau...), au lieu de forcer à
+  // tout recommencer depuis zéro et créer des séances en double.
+  let activeSessionUpload = null;
+
+  function resetSessionUploadState() {
+    activeSessionUpload = null;
+    document.getElementById("session-submit-btn").textContent = "Créer la séance";
+  }
+
   function openSessionPanel() {
     document.getElementById("form-session").style.display = "block";
     document.getElementById("session-created-panel").style.display = "none";
     document.getElementById("session-created-whatsapp").style.display = "none";
     document.getElementById("form-session").reset();
     sessionDZ.reset();
+    resetSessionUploadState();
     document.getElementById("panel-session").classList.add("open");
   }
   document.getElementById("btn-new-session").addEventListener("click", openSessionPanel);
@@ -1081,33 +1108,58 @@
     e.preventDefault();
     if (!sessionFiles.length) { alert("Sélectionnez au moins une photo pour cette séance."); return; }
     const btn = document.getElementById("session-submit-btn");
-    btn.disabled = true; btn.textContent = "Envoi en cours…";
+    btn.disabled = true;
     try {
-      const fd = new FormData();
-      fd.append("client_name", document.getElementById("session-client-name").value);
-      fd.append("client_phone", document.getElementById("session-client-phone").value);
-      const retention = document.getElementById("session-retention").value;
-      const price = document.getElementById("session-recovery-price").value;
-      if (retention) fd.append("retention_days", retention);
-      if (price) fd.append("recovery_price", price);
-      sessionFiles.forEach((f) => fd.append("files", f));
+      // 1) Créer la séance UNE SEULE FOIS (métadonnées seules, sans
+      // fichiers) — si on reprend un envoi interrompu, la séance existe
+      // déjà et on passe directement à l'envoi des fichiers restants.
+      if (!activeSessionUpload) {
+        btn.textContent = "Création de la séance…";
+        const fd = new FormData();
+        fd.append("client_name", document.getElementById("session-client-name").value);
+        fd.append("client_phone", document.getElementById("session-client-phone").value);
+        const retention = document.getElementById("session-retention").value;
+        const price = document.getElementById("session-recovery-price").value;
+        if (retention) fd.append("retention_days", retention);
+        if (price) fd.append("recovery_price", price);
 
-      const r = await apiForm("/sessions", "POST", fd);
+        const r = await apiForm("/sessions", "POST", fd);
+        activeSessionUpload = {
+          sessionId: r.session.id,
+          link: r.session.link,
+          pin: r.pin,
+          sentCount: 0,
+          clientName: document.getElementById("session-client-name").value.trim(),
+          phoneDigits: normalizePhoneForWhatsapp(document.getElementById("session-client-phone").value)
+        };
+      }
+
+      // 2) Envoyer les fichiers par petits lots successifs, en reprenant
+      // là où un éventuel envoi précédent s'était arrêté.
+      const remaining = sessionFiles.slice(activeSessionUpload.sentCount);
+      for (let i = 0; i < remaining.length; i += SESSION_BATCH_SIZE) {
+        const batch = remaining.slice(i, i + SESSION_BATCH_SIZE);
+        btn.textContent = `Envoi… (${activeSessionUpload.sentCount}/${sessionFiles.length})`;
+        const fd = new FormData();
+        batch.forEach((f) => fd.append("files", f));
+        await apiForm(`/sessions/${activeSessionUpload.sessionId}/photos`, "POST", fd);
+        activeSessionUpload.sentCount += batch.length;
+      }
+
+      // 3) Tous les fichiers sont passés : afficher le lien + PIN.
       document.getElementById("form-session").style.display = "none";
       document.getElementById("session-created-panel").style.display = "block";
-      document.getElementById("session-created-link").value = r.session.link;
-      document.getElementById("session-created-pin").value = r.pin;
+      document.getElementById("session-created-link").value = activeSessionUpload.link;
+      document.getElementById("session-created-pin").value = activeSessionUpload.pin;
 
       // Lien WhatsApp pré-rempli avec le lien de la galerie et le code PIN —
       // "le premier code d'ouverture" : ce PIN n'est affiché qu'une seule
       // fois (voir le commentaire du panneau), donc ce bouton n'a de sens
       // qu'à cet instant précis, juste après la création de la séance.
       const waBtn = document.getElementById("session-created-whatsapp");
-      const clientName = document.getElementById("session-client-name").value.trim();
-      const phoneDigits = normalizePhoneForWhatsapp(document.getElementById("session-client-phone").value);
-      if (phoneDigits) {
-        const message = `Bonjour ${clientName || ""},\n\nVoici l'accès à vos photos et vidéos OKIM ART :\n\n📷 Galerie : ${r.session.link}\n🔑 Code PIN : ${r.pin}\n\nCe code est personnel, merci de ne pas le partager.\n\nÀ bientôt !`;
-        waBtn.href = "https://wa.me/" + phoneDigits + "?text=" + encodeURIComponent(message);
+      if (activeSessionUpload.phoneDigits) {
+        const message = `Bonjour ${activeSessionUpload.clientName || ""},\n\nVoici l'accès à vos photos et vidéos OKIM ART :\n\n📷 Galerie : ${activeSessionUpload.link}\n🔑 Code PIN : ${activeSessionUpload.pin}\n\nCe code est personnel, merci de ne pas le partager.\n\nÀ bientôt !`;
+        waBtn.href = "https://wa.me/" + activeSessionUpload.phoneDigits + "?text=" + encodeURIComponent(message);
         waBtn.style.display = "inline-flex";
       } else {
         // Pas de numéro exploitable (champ vide ou format non reconnu) :
@@ -1117,10 +1169,22 @@
 
       await loadSessions();
       await loadDashboard();
+      resetSessionUploadState();
     } catch (err) {
-      alert(err.message);
+      if (activeSessionUpload) {
+        // La séance existe déjà côté serveur avec activeSessionUpload.sentCount
+        // fichiers enregistrés : on NE la recrée PAS. Le bouton reste prêt à
+        // reprendre l'envoi exactement là où il s'est arrêté.
+        alert(
+          `${err.message}\n\n${activeSessionUpload.sentCount}/${sessionFiles.length} fichiers déjà envoyés et enregistrés.\nCliquez à nouveau sur le bouton pour reprendre l'envoi — rien ne sera renvoyé en double.`
+        );
+        btn.textContent = `Reprendre l'envoi (${activeSessionUpload.sentCount}/${sessionFiles.length})`;
+      } else {
+        alert(err.message);
+        btn.textContent = "Créer la séance";
+      }
     } finally {
-      btn.disabled = false; btn.textContent = "Créer la séance";
+      btn.disabled = false;
     }
   });
 
