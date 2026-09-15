@@ -17,6 +17,18 @@ const { nanoid } = require("nanoid");
 const https = require("https");
 const { cloudinary } = require("./cloudinary");
 
+// Agent HTTPS réutilisé avec keep-alive : évite de renégocier une connexion
+// TLS complète à chaque fichier demandé au serveur Cloudinary sous-jacent
+// (res.cloudinary.com), ce qui réduit le temps d'attente avant que les
+// premiers octets commencent à arriver — perceptible surtout quand
+// plusieurs fichiers sont récupérés à la suite (galerie, ZIP...).
+// N'élimine PAS le double trajet Cloudinary → notre serveur → navigateur
+// (nécessaire pour le partage natif iOS, voir openPrivateStream ci-dessous) :
+// c'est ce double trajet, combiné à la bande passante limitée du plan
+// gratuit Render, qui reste le principal facteur de lenteur pour de gros
+// fichiers (vidéos notamment) — cette optimisation atténue, sans supprimer.
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
+
 const REF_PREFIX = "cloudinary:";
 
 function makeRef(resourceType, publicId, version) {
@@ -183,7 +195,7 @@ function openPrivateStream(ref, { onRepair } = {}) {
 /** Suit une vraie chaîne de redirections (pas un seul saut) — https.get() de Node n'en suit aucune nativement. */
 function fetchFollowingRedirects(url, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    https.get(url, { agent: keepAliveAgent }, (res) => {
       const { statusCode, headers } = res;
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
         res.resume(); // vide la réponse en cours pour libérer la connexion
