@@ -35,12 +35,55 @@ async function sessionSummary(req, s) {
   };
 }
 
-// ---------- Créer une séance (upload des photos/vidéos + génération du lien + PIN) ----------
-router.post("/", uploadMedia.array("files", 200), async (req, res) => {
+// ---------- Sauvegarde d'un lot de fichiers pour une séance existante ----------
+// Extrait dans une fonction partagée car appelé à la fois par la création
+// de séance (POST /, avec un premier lot optionnel) et par l'ajout de lots
+// suivants (POST /:id/photos) — voir plus bas pourquoi tout n'est PLUS
+// envoyé en une seule requête géante.
+async function insertSessionFiles(sessionId, files) {
+  // Chaque photo : original HD en stockage privé + aperçu filigrané public
+  // (le client voit toujours un aperçu, jamais le fichier HD tant qu'il
+  // n'a pas d'accès valide — même logique que la boutique).
+  // Chaque vidéo : original HD en stockage privé UNIQUEMENT — pas
+  // d'aperçu public possible (pas de filigrane vidéo côté serveur) ; le
+  // client voit une carte "verrouillée" tant qu'il n'a pas d'accès HD
+  // (voir routes/gallery.js et public/gallery.html).
+  for (const file of files) {
+    assertMediaSize(file);
+    const cleanTitre = (file.originalname || "").replace(/\.[a-zA-Z0-9]+$/, "");
+    if (isVideoFile(file)) {
+      const filePath = await saveVideoPrivate(file.buffer, file.originalname);
+      await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,NULL,'video')")
+        .run(sessionId, cleanTitre, filePath);
+    } else {
+      const filePath = await saveOriginal(file.buffer);
+      const watermarkPath = await savePublicVersion(file.buffer, {
+        urlPrefix: "/uploads/previews",
+        maxWidth: 1000, quality: 78, watermarkText: "OKIM ART — APERÇU"
+      });
+      await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,?,'photo')")
+        .run(sessionId, cleanTitre, filePath, watermarkPath);
+    }
+  }
+}
+
+// Nombre max de fichiers acceptés PAR REQUÊTE (pas par séance). Une séance
+// de 300 photos passe désormais par ~20 requêtes de 15 fichiers plutôt
+// qu'une seule requête géante — voir public/admin/app.js. Ce plafond reste
+// une garde-fou côté serveur, pas la limite réelle d'une séance.
+const MAX_FILES_PER_BATCH = 40;
+
+// ---------- Créer une séance (métadonnées + premier lot optionnel de fichiers) ----------
+// IMPORTANT : les fichiers ne sont plus obligatoires ici. Pour une séance
+// avec beaucoup de photos/vidéos (ex. 300), le front-end crée la séance
+// SANS fichier, puis les envoie par lots successifs via POST /:id/photos
+// ci-dessous — une seule requête contenant des centaines de fichiers finit
+// par timeout ou saturer la mémoire du serveur (RAM limitée sur Render),
+// ce qui se traduisait par une erreur 502 pour l'admin.
+router.post("/", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, res) => {
   try {
     const { client_name, client_phone } = req.body || {};
     if (!client_name || !client_name.trim()) return res.status(400).json({ error: "Le nom du client est requis." });
-    if (!req.files || !req.files.length) return res.status(400).json({ error: "Sélectionnez au moins une photo ou vidéo." });
 
     const retentionDays = Number(req.body.retention_days) || Number(await getSetting("gallery_retention_days", "30"));
     const recoveryPrice = req.body.recovery_price !== undefined && req.body.recovery_price !== ""
@@ -58,29 +101,8 @@ router.post("/", uploadMedia.array("files", 200), async (req, res) => {
     `).run(client_name.trim(), (client_phone || "").trim(), accessToken, pinHash, recoveryPrice, expiresAt);
     const sessionId = session.lastInsertRowid;
 
-    // Chaque photo : original HD en stockage privé + aperçu filigrané public
-    // (le client voit toujours un aperçu, jamais le fichier HD tant qu'il
-    // n'a pas d'accès valide — même logique que la boutique).
-    // Chaque vidéo : original HD en stockage privé UNIQUEMENT — pas
-    // d'aperçu public possible (pas de filigrane vidéo côté serveur) ; le
-    // client voit une carte "verrouillée" tant qu'il n'a pas d'accès HD
-    // (voir routes/gallery.js et public/gallery.html).
-    for (const file of req.files) {
-      assertMediaSize(file);
-      const cleanTitre = (file.originalname || "").replace(/\.[a-zA-Z0-9]+$/, "");
-      if (isVideoFile(file)) {
-        const filePath = await saveVideoPrivate(file.buffer, file.originalname);
-        await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,NULL,'video')")
-          .run(sessionId, cleanTitre, filePath);
-      } else {
-        const filePath = await saveOriginal(file.buffer);
-        const watermarkPath = await savePublicVersion(file.buffer, {
-          urlPrefix: "/uploads/previews",
-          maxWidth: 1000, quality: 78, watermarkText: "OKIM ART — APERÇU"
-        });
-        await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,?,'photo')")
-          .run(sessionId, cleanTitre, filePath, watermarkPath);
-      }
+    if (req.files && req.files.length) {
+      await insertSessionFiles(sessionId, req.files);
     }
 
     const created = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(sessionId);
@@ -89,6 +111,27 @@ router.post("/", uploadMedia.array("files", 200), async (req, res) => {
       session: await sessionSummary(req, created),
       pin: rawPin // affiché UNE SEULE FOIS ici — jamais récupérable ensuite (seul le hash est stocké)
     });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---------- Ajouter un lot de photos/vidéos à une séance existante ----------
+// Appelé plusieurs fois de suite par le front-end (voir app.js) pour
+// envoyer une grosse séance (ex. 300 fichiers) sans jamais dépasser
+// MAX_FILES_PER_BATCH dans une seule requête. Chaque appel est indépendant :
+// si l'un d'eux échoue (coupure réseau...), les lots déjà envoyés restent
+// enregistrés et l'admin peut relancer l'envoi sans tout recommencer.
+router.post("/:id/photos", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, res) => {
+  try {
+    const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
+    if (!s) return res.status(404).json({ error: "Séance introuvable." });
+    if (!req.files || !req.files.length) return res.status(400).json({ error: "Aucun fichier reçu pour ce lot." });
+
+    await insertSessionFiles(s.id, req.files);
+
+    const updated = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(s.id);
+    res.status(201).json({ ok: true, session: await sessionSummary(req, updated) });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
