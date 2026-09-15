@@ -100,6 +100,64 @@
     return Object.assign({ "Authorization": "Bearer " + galleryJwt }, extra || {});
   }
 
+  // Icône 📥 par défaut d'un bouton de téléchargement — remontée ici (avant
+  // était déclarée dans showGallery) car saveMedia() en a aussi besoin pour
+  // restaurer le bouton une fois le téléchargement terminé (voir plus bas).
+  var dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5"/><path d="M4 19h16"/></svg>';
+
+  // Anneau de progression circulaire affiché à la place de l'icône pendant
+  // un téléchargement (voir fetchWithProgress + saveMedia ci-dessous).
+  // pct: nombre entre 0 et 1, ou null si la taille totale du fichier est
+  // inconnue (pas d'en-tête Content-Length) → anneau tournant "indéterminé"
+  // plutôt qu'un pourcentage trompeur.
+  function progressRingSvg(pct){
+    var r = 9, c = Math.round(2 * Math.PI * r);
+    if (pct == null) {
+      return '<svg viewBox="0 0 24 24" class="dl-progress-ring indeterminate">' +
+        '<circle cx="12" cy="12" r="' + r + '" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+        'stroke-dasharray="' + Math.round(c * 0.25) + ' ' + c + '" stroke-linecap="round"/></svg>';
+    }
+    var offset = Math.round(c * (1 - Math.max(0, Math.min(1, pct))));
+    return '<svg viewBox="0 0 24 24" class="dl-progress-ring">' +
+      '<circle cx="12" cy="12" r="' + r + '" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="2.4"/>' +
+      '<circle cx="12" cy="12" r="' + r + '" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+      'stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" ' +
+      'transform="rotate(-90 12 12)"/></svg>';
+  }
+
+  // Récupère un fichier en suivant sa progression octet par octet, pour
+  // afficher un vrai pourcentage pendant le téléchargement (et pas juste un
+  // état figé "en cours..." jusqu'à la fin). onProgress(pct, received, total)
+  // est appelé à chaque paquet reçu ; pct vaut null si le serveur n'envoie
+  // pas Content-Length (progression alors affichée comme "indéterminée").
+  async function fetchWithProgress(url, options, onProgress){
+    var res = await fetch(url, options);
+    if (!res.ok) {
+      var errData = null;
+      try { errData = await res.clone().json(); } catch (e) { /* réponse non-JSON */ }
+      throw new Error((errData && errData.error) || ("Téléchargement impossible (code " + res.status + ")."));
+    }
+    var total = Number(res.headers.get("Content-Length")) || 0;
+    if (!res.body || !res.body.getReader) {
+      // Repli pour un navigateur sans support du streaming de réponse
+      // (très rare aujourd'hui) : pas de progression détaillée possible.
+      var blobFallback = await res.blob();
+      if (onProgress) onProgress(1, blobFallback.size, blobFallback.size);
+      return blobFallback;
+    }
+    var reader = res.body.getReader();
+    var chunks = [];
+    var received = 0;
+    for (;;) {
+      var step = await reader.read();
+      if (step.done) break;
+      chunks.push(step.value);
+      received += step.value.length;
+      if (onProgress) onProgress(total ? received / total : null, received, total);
+    }
+    return new Blob(chunks, { type: res.headers.get("Content-Type") || undefined });
+  }
+
   function showGallery(session, photos){
     currentSession = session;
     document.getElementById("pin-view").style.display = "none";
@@ -127,7 +185,6 @@
       document.getElementById("gallery-hint").style.display = "none";
     }
 
-    var dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5"/><path d="M4 19h16"/></svg>';
     var playIcon = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 
     // URL de la vignette vidéo (frame extraite côté serveur par Cloudinary —
@@ -167,6 +224,19 @@
       return '<figure' + dataAttrs + clickable + '><img src="' + esc(p.watermark_path) + '" alt="' + esc(p.titre || "Photo") + '" loading="lazy">' + dlBtn + '</figure>';
     }).join("");
 
+    // Dissuasion contre la copie facile des aperçus (clic droit "Enregistrer
+    // l'image sous...", glisser-déposer vers le bureau). Ne bloque PAS une
+    // vraie capture d'écran — impossible depuis un site web, voir le
+    // commentaire dans public/css/shop.css. Un seul écouteur pour toute la
+    // grille (délégation) plutôt qu'un par image, y compris pour les
+    // vignettes ajoutées dynamiquement plus tard.
+    document.getElementById("photo-grid").addEventListener("contextmenu", function(e){
+      if (e.target.tagName === "IMG") e.preventDefault();
+    });
+    document.getElementById("photo-grid").addEventListener("dragstart", function(e){
+      if (e.target.tagName === "IMG") e.preventDefault();
+    });
+
     // Repli propre si une vignette vidéo échoue à charger (ancien fichier
     // local pré-migration, vidéo corrompue...) : icône générique à la place.
     // Les événements "error" sur <img> ne remontent pas (pas de bubbling) —
@@ -201,7 +271,7 @@
     var saveBtn = document.getElementById("lightbox-save");
     saveBtn.style.display = "inline-flex";
     saveBtn.textContent = type === "video" ? "📥 Enregistrer la vidéo" : "📥 Enregistrer la photo";
-    saveBtn.onclick = function(){ saveMedia(id, type, titre); };
+    saveBtn.onclick = function(){ saveMedia(id, type, titre, saveBtn); };
     document.getElementById("lightbox").style.display = "flex";
   }
   function closeLightbox(){
@@ -234,15 +304,41 @@
   // canShare() renvoyait faux — jamais si share() lui-même échouait après
   // coup, ce qui explique l'erreur bloquante observée. On intercepte
   // maintenant CET échec précis pour basculer sur le repli automatiquement.
-  async function saveMedia(id, type, titre){
+  async function saveMedia(id, type, titre, triggerEl){
     var ext = type === "video" ? "mp4" : "jpg";
     var filename = "okim-art-" + (titre || type).replace(/[^a-z0-9]+/gi, "-") + "." + ext;
+
+    // État visuel pendant le téléchargement : anneau de progression pour le
+    // petit bouton rond de la grille (data-save-id), pourcentage textuel
+    // pour le bouton plein texte de la visionneuse (#lightbox-save) — deux
+    // rendus différents car l'espace disponible n'est pas le même.
+    var isGridBtn = triggerEl && triggerEl.hasAttribute("data-save-id");
+    var originalContent = triggerEl ? triggerEl.innerHTML : null;
+    var originalText = triggerEl ? triggerEl.textContent : null;
+    function updateProgress(pct){
+      if (!triggerEl) return;
+      if (isGridBtn) {
+        triggerEl.innerHTML = progressRingSvg(pct);
+      } else {
+        triggerEl.textContent = pct == null
+          ? "Téléchargement…"
+          : "Téléchargement… " + Math.round(pct * 100) + "%";
+      }
+    }
+    function restoreButton(){
+      if (!triggerEl) return;
+      if (isGridBtn) triggerEl.innerHTML = originalContent != null ? originalContent : dlIcon;
+      else triggerEl.textContent = originalText;
+      triggerEl.disabled = false;
+    }
+
+    if (triggerEl) { triggerEl.disabled = true; updateProgress(null); }
+
     var blob;
     try {
-      var res = await fetch(blobUrl(id));
-      if (!res.ok) throw new Error("Le fichier n'a pas pu être récupéré (code " + res.status + ").");
-      blob = await res.blob();
+      blob = await fetchWithProgress(blobUrl(id), {}, function(pct){ updateProgress(pct); });
     } catch (e) {
+      restoreButton();
       alert("Impossible de récupérer ce fichier pour le moment : " + e.message);
       return;
     }
@@ -258,9 +354,10 @@
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file] });
+        restoreButton();
         return;
       } catch (e) {
-        if (e && e.name === "AbortError") return; // annulation volontaire : on s'arrête là, pas d'erreur
+        if (e && e.name === "AbortError") { restoreButton(); return; } // annulation volontaire : on s'arrête là, pas d'erreur
         // Toute autre erreur (ex. geste utilisateur expiré) : on continue
         // vers le repli ci-dessous au lieu d'abandonner.
       }
@@ -274,12 +371,13 @@
     a.href = objectUrl; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function(){ URL.revokeObjectURL(objectUrl); }, 15000);
+    restoreButton();
   }
 
   document.getElementById("photo-grid").addEventListener("click", function(e){
     var saveBtn = e.target.closest("[data-save-id]");
     if (saveBtn) {
-      saveMedia(saveBtn.getAttribute("data-save-id"), saveBtn.getAttribute("data-save-type"), saveBtn.getAttribute("data-save-titre"));
+      saveMedia(saveBtn.getAttribute("data-save-id"), saveBtn.getAttribute("data-save-type"), saveBtn.getAttribute("data-save-titre"), saveBtn);
       return;
     }
     var fig = e.target.closest("figure[data-clickable]");
@@ -315,13 +413,17 @@
   document.getElementById("download-btn").addEventListener("click", function(){
     var btn = this;
     var original = btn.textContent;
-    btn.textContent = "Préparation de l'archive…";
+    btn.textContent = "Préparation de l'archive…"; // le serveur assemble le ZIP avant d'envoyer le premier octet — pas de % possible pendant cette phase
     btn.disabled = true;
-    fetch("/api/gallery/" + encodeURIComponent(token) + "/download", { headers: authHeaders() })
-      .then(function(r){
-        if (!r.ok) return r.json().then(function(d){ throw new Error(d.error || "Téléchargement impossible."); });
-        return r.blob();
-      })
+    fetchWithProgress(
+      "/api/gallery/" + encodeURIComponent(token) + "/download",
+      { headers: authHeaders() },
+      function(pct){
+        btn.textContent = pct == null
+          ? "Téléchargement en cours…" // taille totale inconnue (pas de Content-Length) : pas de % fiable, juste un indicateur d'activité
+          : "Téléchargement… " + Math.round(pct * 100) + "%";
+      }
+    )
       .then(function(blob){
         var url = URL.createObjectURL(blob);
         var a = document.createElement("a");
