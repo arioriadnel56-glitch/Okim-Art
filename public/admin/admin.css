@@ -472,6 +472,14 @@ table.admin-table img.thumb, table.admin-table video.thumb{
   width:64px; height:64px; object-fit:cover; border-radius:6px; margin:0;
   border:1px solid var(--line);
 }
+/* Vignette "+N" affichée à la place des aperçus au-delà de MAX_PREVIEW_THUMBS
+   (voir app.js) — évite de générer des centaines de vignettes d'un coup
+   pour une grosse séance (300 photos), ce qui ralentissait le navigateur. */
+.session-preview-more{
+  width:64px; height:64px; border-radius:6px; border:1px dashed var(--line);
+  display:flex; align-items:center; justify-content:center;
+  font-size:.8rem; font-weight:600; color:var(--muted, #888);
+}
 
 /* ---------- Micro-animations (aucune nouvelle couleur, juste du mouvement) ---------- */
 @keyframes adminFadeIn{
