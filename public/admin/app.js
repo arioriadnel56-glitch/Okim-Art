@@ -1108,6 +1108,16 @@
     e.preventDefault();
     if (!sessionFiles.length) { alert("Sélectionnez au moins une photo pour cette séance."); return; }
     const btn = document.getElementById("session-submit-btn");
+    if (btn.disabled) return; // évite un double-clic qui relancerait une requête pendant que la précédente tourne encore
+    // Validé ICI, côté client, AVANT toute requête : si le nom manque, on ne
+    // crée pas de séance à moitié — évite aussi de dépendre uniquement du
+    // message d'erreur renvoyé par le serveur pour ce cas précis.
+    const clientNameValue = document.getElementById("session-client-name").value.trim();
+    if (!activeSessionUpload && !clientNameValue) {
+      alert("Le nom du client est requis.");
+      document.getElementById("session-client-name").focus();
+      return;
+    }
     btn.disabled = true;
     try {
       // 1) Créer la séance UNE SEULE FOIS (métadonnées seules, sans
@@ -1116,7 +1126,7 @@
       if (!activeSessionUpload) {
         btn.textContent = "Création de la séance…";
         const fd = new FormData();
-        fd.append("client_name", document.getElementById("session-client-name").value);
+        fd.append("client_name", clientNameValue);
         fd.append("client_phone", document.getElementById("session-client-phone").value);
         const retention = document.getElementById("session-retention").value;
         const price = document.getElementById("session-recovery-price").value;
@@ -1124,14 +1134,27 @@
         if (price) fd.append("recovery_price", price);
 
         const r = await apiForm("/sessions", "POST", fd);
+        // Garde-fou : si la réponse du serveur est inattendue (pas de champ
+        // "session"), on échoue explicitement ICI plutôt que de laisser
+        // activeSessionUpload dans un état à moitié rempli.
+        if (!r || !r.session || !r.session.id) {
+          throw new Error("Réponse inattendue du serveur lors de la création de la séance.");
+        }
         activeSessionUpload = {
           sessionId: r.session.id,
           link: r.session.link,
           pin: r.pin,
           sentCount: 0,
-          clientName: document.getElementById("session-client-name").value.trim(),
+          clientName: clientNameValue,
           phoneDigits: normalizePhoneForWhatsapp(document.getElementById("session-client-phone").value)
         };
+      }
+
+      // Garde-fou supplémentaire : ne devrait jamais se produire vu la
+      // logique ci-dessus, mais on préfère un message clair à un plantage
+      // "null is not an object" si jamais l'état venait à être incohérent.
+      if (!activeSessionUpload) {
+        throw new Error("La séance n'a pas pu être créée. Veuillez réessayer.");
       }
 
       // 2) Envoyer les fichiers par petits lots successifs, en reprenant
@@ -1171,7 +1194,7 @@
       await loadDashboard();
       resetSessionUploadState();
     } catch (err) {
-      if (activeSessionUpload) {
+      if (activeSessionUpload && typeof activeSessionUpload.sentCount === "number") {
         // La séance existe déjà côté serveur avec activeSessionUpload.sentCount
         // fichiers enregistrés : on NE la recrée PAS. Le bouton reste prêt à
         // reprendre l'envoi exactement là où il s'est arrêté.
@@ -1180,6 +1203,7 @@
         );
         btn.textContent = `Reprendre l'envoi (${activeSessionUpload.sentCount}/${sessionFiles.length})`;
       } else {
+        activeSessionUpload = null; // état incohérent éventuel → on repart d'une création propre au prochain clic
         alert(err.message);
         btn.textContent = "Créer la séance";
       }
