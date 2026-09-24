@@ -1,5 +1,5 @@
 // ============================================================
-// download.js — téléchargement sécurisé par proxy streaming
+// download.js — livraison et affichage direct des médias boutique
 // ============================================================
 const express = require("express");
 const path = require("path");
@@ -16,26 +16,26 @@ router.get("/:token", async (req, res) => {
     // 1. Validation du jeton de téléchargement
     const row = await getValidToken(req.params.token);
     if (!row) {
-      return res.status(410).json({ error: "Lien de téléchargement invalide, expiré ou déjà utilisé." });
+      return res.status(410).json({ error: "Lien invalide, expiré ou déjà utilisé." });
     }
 
-    // 2. Récupération du produit lié
+    // 2. Récupération du produit en base de données
     const product = await db.prepare("SELECT * FROM products WHERE id = ?").get(row.product_id);
     if (!product || !product.fichier_original || product.fichier_original.trim() === "") {
-      return res.status(404).json({ error: "Fichier associé introuvable ou en cours de préparation." });
+      return res.status(404).json({ error: "Le fichier HD associé n'est pas encore disponible." });
     }
 
-    // Normalisation du nom de fichier
+    // Normalisation du nom de fichier et déduction de l'extension
     const safeTitre = (product.titre || "photo-okim-art").replace(/[^a-z0-9]+/gi, "-");
     const isVideo = product.type === "video";
     const ext = isVideo ? ".mp4" : ".jpg";
     const finalFilename = `okim-art-${safeTitre}${ext}`;
 
-    // Consommation du jeton unique avant d'initier le transfert
+    // Consommation du jeton unique
     await consumeToken(req.params.token);
 
     // ------------------------------------------------------------
-    // CAS A : Fichier hébergé sur Cloudinary (Proxy Streaming CORS-safe)
+    // CAS A : Livré depuis Cloudinary (Proxy Streaming CORS-safe)
     // ------------------------------------------------------------
     if (isCloudinaryRef(product.fichier_original)) {
       let stream;
@@ -46,24 +46,22 @@ router.get("/:token", async (req, res) => {
         });
       } catch (e) {
         console.error("[download] Erreur ouverture flux Cloudinary :", e.message);
-        return res.status(404).json({ error: "Ce fichier n'est plus disponible sur le stockage distant." });
+        return res.status(404).json({ error: "Fichier indisponible sur le stockage distant." });
       }
 
       if (stream.statusCode) res.status(stream.statusCode);
 
-      // Forcer l'en-tête de téléchargement direct pour iOS/Android sur notre propre domaine
-      res.setHeader("Content-Disposition", `attachment; filename="${finalFilename}"`);
+      // EN-TÊTE INLINE : Permet l'ouverture directe du média dans Safari/Chrome mobile
+      res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
+      res.setHeader("Content-Disposition", `inline; filename="${finalFilename}"`);
 
-      const headersToRelay = ["content-type", "content-length", "accept-ranges", "content-range"];
+      // Relais de la taille et des en-têtes de streaming
+      const headersToRelay = ["content-length", "accept-ranges", "content-range"];
       headersToRelay.forEach((h) => {
         if (stream.headers[h]) res.setHeader(h, stream.headers[h]);
       });
 
-      if (!stream.headers["content-type"]) {
-        res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
-      }
-
-      // Sécurité anti-fuite de socket si le client annule le téléchargement
+      // Destruction du flux en cas de déconnexion prématurée du client
       req.on("close", () => {
         if (stream && typeof stream.destroy === "function") stream.destroy();
       });
@@ -78,7 +76,7 @@ router.get("/:token", async (req, res) => {
 
     if (!fs.existsSync(fullPath)) {
       console.error(`[download] Fichier local introuvable : ${fullPath}`);
-      return res.status(404).json({ error: "Ce fichier n'est plus disponible sur le serveur." });
+      return res.status(404).json({ error: "Fichier local introuvable sur le serveur." });
     }
 
     const stat = fs.statSync(fullPath);
@@ -88,19 +86,15 @@ router.get("/:token", async (req, res) => {
 
     res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
     res.setHeader("Content-Length", stat.size);
-    res.setHeader("Content-Disposition", `attachment; filename="${finalFilename}"`);
+    res.setHeader("Content-Disposition", `inline; filename="${finalFilename}"`);
 
-    return res.download(fullPath, finalFilename, (err) => {
-      if (err && !res.headersSent) {
-        console.error("[download] Erreur res.download local :", err);
-        res.status(500).json({ error: "Erreur lors du transfert du fichier." });
-      }
-    });
+    const fileStream = fs.createReadStream(fullPath);
+    return fileStream.pipe(res);
 
   } catch (err) {
     console.error("Erreur serveur /api/download/:token :", err);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Erreur interne lors de la livraison du fichier." });
+      res.status(500).json({ error: "Erreur lors du traitement du fichier." });
     }
   }
 });
