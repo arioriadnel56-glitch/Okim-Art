@@ -15,7 +15,7 @@ const { notifyAdminInApp } = require("../utils/notifications");
 
 const router = express.Router();
 
-// ---------- Commandes du client ----------
+// ---------- Commandes du client & Téléchargements Boutique ----------
 router.get("/orders", requireClient, async (req, res) => {
   try {
     const orders = await db.prepare("SELECT * FROM orders WHERE client_id = ? ORDER BY created_at DESC").all(req.client.id);
@@ -26,27 +26,38 @@ router.get("/orders", requireClient, async (req, res) => {
       const itemsWithLinks = [];
 
       for (const it of items) {
-        const candidates = await tokensForOrder(o.id);
-        let token = null;
-
-        for (const t of candidates) {
-          if (t.product_id === it.product_id && (await getValidToken(t.token))) { 
-            token = t; 
-            break; 
-          }
-        }
+        // VÉRIFICATION : S'assurer que le produit possède un fichier original valide
+        const product = await db.prepare("SELECT fichier_original FROM products WHERE id = ?").get(it.product_id);
+        const hasFile = !!(product && product.fichier_original && product.fichier_original.trim() !== "");
 
         let downloadUrl = null;
-        if (o.statut === "payee" || o.statut === "livree") {
+
+        // Génération du lien de téléchargement uniquement si la commande est payée/livrée ET que le fichier existe
+        if ((o.statut === "payee" || o.statut === "livree") && hasFile) {
+          const candidates = await tokensForOrder(o.id);
+          let token = null;
+
+          for (const t of candidates) {
+            if (t.product_id === it.product_id && (await getValidToken(t.token))) {
+              token = t;
+              break;
+            }
+          }
+
           if (!token) {
-            // Génère un nouveau lien si aucun n'est encore valide (ex. ancien expiré).
+            // Génère un nouveau jeton si aucun n'est encore valide
             const newToken = await createDownloadToken(o.id, it.product_id);
             downloadUrl = `/api/download/${newToken}`;
           } else {
             downloadUrl = `/api/download/${token.token}`;
           }
         }
-        itemsWithLinks.push({ ...it, downloadUrl });
+
+        itemsWithLinks.push({
+          ...it,
+          downloadUrl,
+          hasFile // Indique si le fichier HD est disponible
+        });
       }
       withDetails.push({ ...o, items: itemsWithLinks });
     }
@@ -100,12 +111,12 @@ router.get("/software", requireClient, async (req, res) => {
   }
 });
 
-// Téléchargement du fichier logiciel sécurisé
+// Téléchargement sécurisé du fichier logiciel
 router.get("/software/:licenseId/download", requireClient, async (req, res) => {
   try {
     const license = await db.prepare("SELECT * FROM licenses WHERE id = ? AND client_id = ?").get(req.params.licenseId, req.client.id);
     if (!license) return res.status(404).json({ error: "Licence introuvable." });
-    
+
     if (!isLicenseValid(license)) {
       return res.status(403).json({ error: "Cette licence n'est plus active (expirée, suspendue ou annulée). Contactez le support." });
     }
@@ -115,20 +126,19 @@ router.get("/software/:licenseId/download", requireClient, async (req, res) => {
       return res.status(404).json({ error: "Aucun fichier disponible pour ce logiciel pour le moment." });
     }
 
-    // Journalisation du téléchargement
+    // Journalisation de l'activation/téléchargement
     await db.prepare("INSERT INTO software_downloads (license_id, version_id, client_id) VALUES (?,?,?)")
       .run(license.id, version.id, req.client.id);
 
     const product = await db.prepare(`
       SELECT p.titre FROM products p JOIN software_products sw ON sw.product_id = p.id WHERE sw.id = ?
     `).get(license.software_id);
-    
+
     const safeTitre = (product?.titre || "logiciel").replace(/[^a-z0-9]+/gi, "-");
     const versionLabel = version.version ? `-v${version.version}` : "";
 
-    // CAS A : Téléchargement via Cloudinary
+    // CAS A : Fichier sur Cloudinary
     if (isCloudinaryRef(version.fichier)) {
-      // Extraction sécurisée de l'extension si présente dans la version, sinon fallback .zip
       let ext = path.extname(version.fichier);
       if (!ext || ext.length > 5) ext = ".zip";
 
@@ -171,7 +181,7 @@ router.get("/software/:licenseId/download", requireClient, async (req, res) => {
   }
 });
 
-// ---------- Modification Profil ----------
+// ---------- Modification Profil Client ----------
 router.put("/profile", requireClient, async (req, res) => {
   try {
     const { nom, telephone, nouveau_mot_de_passe } = req.body || {};
@@ -194,7 +204,7 @@ router.put("/profile", requireClient, async (req, res) => {
   }
 });
 
-// ---------- Témoignages ----------
+// ---------- Témoignages Client ----------
 router.get("/testimonials/mine", requireClient, async (req, res) => {
   try {
     const t = await db.prepare("SELECT id, nom, texte, note, statut, created_at, updated_at FROM testimonials WHERE client_id = ?").get(req.client.id);
@@ -227,7 +237,7 @@ router.put("/testimonials/mine", requireClient, async (req, res) => {
 
     const saved = await db.prepare("SELECT id, nom, texte, note, statut, created_at, updated_at FROM testimonials WHERE client_id = ?").get(req.client.id);
     notifyAdminInApp("testimonial_new", `Témoignage à modérer — ${displayName}`, texte.trim().slice(0, 100), "#testimonials");
-    
+
     res.json({ ok: true, testimonial: saved });
   } catch (err) {
     console.error("Erreur PUT /testimonials/mine :", err);
@@ -244,7 +254,7 @@ router.delete("/testimonials/mine", requireClient, async (req, res) => {
   }
 });
 
-// ---------- Notifications ----------
+// ---------- Notifications (espace client) ----------
 router.get("/notifications", requireClient, async (req, res) => {
   try {
     const notifications = await db.prepare("SELECT * FROM notifications WHERE audience = 'client' AND client_id = ? ORDER BY created_at DESC LIMIT 50").all(req.client.id);
@@ -273,7 +283,7 @@ router.post("/notifications/read-all", requireClient, async (req, res) => {
   }
 });
 
-// ---------- Suppression DÉFINITIVE du compte ----------
+// ---------- Suppression DÉFINITIVE du compte client ----------
 router.delete("/account", requireClient, async (req, res) => {
   try {
     const { password } = req.body || {};
