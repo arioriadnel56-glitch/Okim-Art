@@ -106,12 +106,18 @@ router.get("/software/:licenseId/download", requireClient, async (req, res) => {
   if (isCloudinaryRef(version.fichier)) {
     // MIGRATION CLOUDINARY : voir download.js pour le même principe —
     // redirection vers une URL signée générée après vérification complète
-    // de la licence ci-dessus (jamais avant).
+    // de la licence ci-dessus (jamais avant). Erreur interceptée ici pour
+    // un message clair au client plutôt que le générique "Erreur interne
+    // du serveur" (voir le commentaire détaillé dans download.js).
     const ext = path.extname(version.fichier) || ".zip";
-    const url = await signedPrivateUrl(version.fichier, `okim-art-${safeTitre}-v${version.version}${ext}`, {
-      onRepair: (repairedRef) => db.prepare("UPDATE software_versions SET fichier = ? WHERE id = ?").run(repairedRef, version.id)
-    });
-    return res.redirect(url);
+    try {
+      const url = await signedPrivateUrl(version.fichier, `okim-art-${safeTitre}-v${version.version}${ext}`, {
+        onRepair: (repairedRef) => db.prepare("UPDATE software_versions SET fichier = ? WHERE id = ?").run(repairedRef, version.id)
+      });
+      return res.redirect(url);
+    } catch (e) {
+      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
+    }
   }
 
   // Compatibilité ascendante : ancien chemin local (voir download.js).
