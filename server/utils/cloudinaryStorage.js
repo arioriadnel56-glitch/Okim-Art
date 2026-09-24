@@ -80,14 +80,16 @@ async function destroyPublicUrl(url) {
 }
 
 /**
- * Génère une URL signée sécurisée pour livrer un asset PRIVÉ à un client.
+ * Génère une URL de livraison sécurisée pour livrer un asset Cloudinary à un client.
+ * Gère le fallback si l'asset a été téléversé en type "upload" (public) ou "authenticated" (privé).
  */
 async function signedPrivateUrl(ref, filename, { inline = false, onRepair } = {}) {
   const { resourceType, publicId, version } = parseRef(ref);
   let v = version;
   let detectedFormat = null;
+  let accessType = "authenticated"; // Par défaut
 
-  // Extraction de l'extension si le filename est transmis
+  // Extraction de l'extension si un nom de fichier est fourni
   if (filename) {
     const ext = path.extname(filename).replace(".", "").toLowerCase();
     if (ext && ext !== "bin") {
@@ -95,37 +97,50 @@ async function signedPrivateUrl(ref, filename, { inline = false, onRepair } = {}
     }
   }
 
-  if (!v) {
+  // Vérification et récupération des métadonnées de l'asset
+  try {
+    // 1. Essai en mode privé (authenticated)
+    const info = await cloudinary.api.resource(publicId, { resource_type: resourceType, type: "authenticated" });
+    v = info.version || v;
+    if (!detectedFormat && info.format) {
+      detectedFormat = info.format;
+    }
+    if (v && onRepair && !version) {
+      const repairedRef = makeRef(resourceType, publicId, v);
+      Promise.resolve(onRepair(repairedRef)).catch((e) =>
+        console.error("[cloudinary] échec de la sauvegarde de la version réparée :", e.message)
+      );
+    }
+  } catch (e) {
+    // 2. Fallback : Essai en mode public (upload) si l'asset n'est pas en "authenticated"
     try {
-      const info = await cloudinary.api.resource(publicId, { resource_type: resourceType, type: "authenticated" });
-      v = info.version;
-      if (!detectedFormat && info.format) {
-        detectedFormat = info.format;
+      const publicInfo = await cloudinary.api.resource(publicId, { resource_type: resourceType, type: "upload" });
+      v = publicInfo.version || v;
+      accessType = "upload";
+      if (!detectedFormat && publicInfo.format) {
+        detectedFormat = publicInfo.format;
       }
-      if (v && onRepair) {
-        const repairedRef = makeRef(resourceType, publicId, v);
-        Promise.resolve(onRepair(repairedRef)).catch((e) =>
-          console.error("[cloudinary] échec de la sauvegarde de la version réparée :", e.message)
-        );
-      }
-    } catch (e) {
-      console.error("[cloudinary] impossible de récupérer la version de", publicId, "(resource_type:", resourceType + ") -", e.message);
-      throw new Error("Ce fichier n'est plus disponible sur le stockage (référence introuvable ou expirée). Contactez le support.");
+    } catch (errPublic) {
+      console.error("[cloudinary] impossible de localiser l'asset :", publicId, "(resource_type:", resourceType + ")");
+      throw new Error("Ce fichier n'est plus disponible sur le stockage. Contactez le support.");
     }
   }
 
   const opts = { 
     resource_type: resourceType, 
-    type: "authenticated", 
-    sign_url: true, 
+    type: accessType, 
     secure: true 
   };
+
+  if (accessType === "authenticated") {
+    opts.sign_url = true;
+  }
 
   if (v) opts.version = v;
   if (detectedFormat) opts.format = detectedFormat;
 
   if (!inline) {
-    // Correctif header attachment avec encodage strict des caractères pour éviter les rejets Safari/iOS
+    // Force le téléchargement direct avec nom de fichier encodé
     const safeFilename = filename ? encodeURIComponent(filename) : "download";
     opts.flags = `attachment:${safeFilename}`;
   }
@@ -134,7 +149,7 @@ async function signedPrivateUrl(ref, filename, { inline = false, onRepair } = {}
 }
 
 /**
- * Ouvre un flux HTTPS lisible vers un asset PRIVÉ via un proxy en streaming.
+ * Ouvre un flux HTTPS lisible vers un asset via un proxy en streaming.
  */
 function openPrivateStream(ref, { onRepair } = {}) {
   return signedPrivateUrl(ref, null, { inline: true, onRepair }).then((url) => fetchFollowingRedirects(url));
@@ -147,7 +162,7 @@ function fetchFollowingRedirects(url, redirectsLeft = 5) {
       const { statusCode, headers } = res;
 
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
-        res.resume(); // Indispensable : libère immédiatement le socket
+        res.resume(); // Libère le socket immédiatement
         if (redirectsLeft <= 0) return reject(new Error("Trop de redirections lors de la récupération du fichier."));
         const nextUrl = new URL(headers.location, url).toString();
         return resolve(fetchFollowingRedirects(nextUrl, redirectsLeft - 1));
