@@ -158,7 +158,16 @@ async function signedPrivateUrl(ref, filename, { inline = false, onRepair } = {}
         );
       }
     } catch (e) {
-      console.error("[cloudinary] impossible de récupérer la version de", publicId, "-", e.message);
+      // BUG CORRIGÉ : cette erreur était seulement journalisée, puis la
+      // fonction continuait quand même à construire une URL SANS version —
+      // Cloudinary refuse alors de servir un asset "authenticated" sans la
+      // bonne version (réponse vide/erreur), ce qui produisait un
+      // téléchargement silencieux de 0 octet côté client, sans AUCUN
+      // message d'erreur exploitable. On échoue maintenant explicitement,
+      // avec le détail complet dans les logs serveur (Render → Logs) pour
+      // un diagnostic immédiat au lieu d'un mystère.
+      console.error("[cloudinary] impossible de récupérer la version de", publicId, "(resource_type:", resourceType + ") -", e.message);
+      throw new Error("Ce fichier n'est plus disponible sur le stockage (référence introuvable ou expirée). Contactez le support avec la référence : " + publicId);
     }
   }
 
