@@ -13,7 +13,7 @@ const { getSetting, addDays, hasHdAccess } = require("../../utils/gallery");
 
 const router = express.Router();
 
-/** Génère un code PIN à 6 chiffres cryptographiquement aléatoire (jamais 0-padding faible). */
+/** Génère un code PIN à 6 chiffres cryptographiquement aléatoire. */
 function generatePin() {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
 }
@@ -38,54 +38,28 @@ async function sessionSummary(req, s) {
   };
 }
 
-// Construit le texte du filigrane à partir du nom du client et d'un
-// identifiant court de séance. Rendre le filigrane spécifique à CHAQUE
-// séance (plutôt qu'un générique "OKIM ART — APERÇU" identique pour tout
-// le monde) permet de retracer l'origine d'un aperçu capturé et partagé
-// sans autorisation — c'est la vraie protection, une capture d'écran en
-// tant que telle ne pouvant techniquement pas être empêchée par un site
-// web (voir public/css/shop.css et public/gallery.html pour les mesures
-// dissuasives complémentaires, qui ne bloquent que le clic droit/glisser).
 function buildWatermarkLabel(clientName, accessToken) {
   const shortName = (clientName || "Client").trim().slice(0, 22);
   const shortToken = (accessToken || "").replace(/-/g, "").slice(0, 6).toUpperCase();
   return `OKIM ART • ${shortName}${shortToken ? " • " + shortToken : ""}`;
 }
 
-// ---------- Sauvegarde d'un lot de fichiers pour une séance existante ----------
-// Extrait dans une fonction partagée car appelé à la fois par la création
-// de séance (POST /, avec un premier lot optionnel) et par l'ajout de lots
-// suivants (POST /:id/photos) — voir plus bas pourquoi tout n'est PLUS
-// envoyé en une seule requête géante.
+// ---------- Traitement des fichiers par lots ----------
 async function insertSessionFiles(sessionId, files, watermarkLabel) {
-  // Chaque photo : original HD en stockage privé + aperçu filigrané public
-  // (le client voit toujours un aperçu, jamais le fichier HD tant qu'il
-  // n'a pas d'accès valide — même logique que la boutique). Le filigrane
-  // identifie la séance/le client (voir buildWatermarkLabel ci-dessus).
-  // Chaque vidéo : original HD en stockage privé UNIQUEMENT — pas
-  // d'aperçu public possible (pas de filigrane vidéo côté serveur) ; le
-  // client voit une carte "verrouillée" tant qu'il n'a pas d'accès HD
-  // (voir routes/gallery.js et public/gallery.html). En pratique, les
-  // vidéos passent désormais presque toujours par l'upload direct (voir
-  // POST /:id/videos) — ce chemin vidéo n'est conservé ici que par sécurité
-  // (compatibilité, anciens appels).
-  //
-  // Traitement en PARALLÈLE (jusqu'à CONCURRENCY fichiers à la fois) plutôt
-  // qu'un par un : chaque photo demande 2 allers-retours Cloudinary
-  // (original + filigrane), donc les traiter en séquence pour un lot de 15
-  // photos pouvait prendre un temps considérable. La base de données
-  // (pool PostgreSQL) supporte nativement des écritures concurrentes — pas
-  // de risque de corruption. CONCURRENCY reste modéré (pas 15 à la fois)
-  // pour ne pas saturer la RAM du plan Render Free avec trop de buffers
-  // photo (jusqu'à 20 Mo chacun) traités simultanément.
-  const CONCURRENCY = 4;
+  // Réduction de la concurrence à 2 pour éviter la saturation mémoire (RAM) 
+  // lors du traitement de fichiers volumineux.
+  const CONCURRENCY = 2;
   let nextIndex = 0;
+
   async function worker() {
     for (;;) {
       const i = nextIndex++;
       if (i >= files.length) return;
       const file = files[i];
+
+      // Vérification de la taille (définie dans utils/upload.js)
       assertMediaSize(file);
+
       const cleanTitre = (file.originalname || "").replace(/\.[a-zA-Z0-9]+$/, "");
       if (isVideoFile(file)) {
         const filePath = await saveVideoPrivate(file.buffer, file.originalname);
@@ -95,7 +69,9 @@ async function insertSessionFiles(sessionId, files, watermarkLabel) {
         const filePath = await saveOriginal(file.buffer);
         const watermarkPath = await savePublicVersion(file.buffer, {
           urlPrefix: "/uploads/previews",
-          maxWidth: 1000, quality: 78, watermarkText: watermarkLabel || "OKIM ART — APERÇU"
+          maxWidth: 1000, 
+          quality: 78, 
+          watermarkText: watermarkLabel || "OKIM ART — APERÇU"
         });
         await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,?,'photo')")
           .run(sessionId, cleanTitre, filePath, watermarkPath);
@@ -105,19 +81,9 @@ async function insertSessionFiles(sessionId, files, watermarkLabel) {
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
 }
 
-// Nombre max de fichiers acceptés PAR REQUÊTE (pas par séance). Une séance
-// de 300 photos passe désormais par ~20 requêtes de 15 fichiers plutôt
-// qu'une seule requête géante — voir public/admin/app.js. Ce plafond reste
-// une garde-fou côté serveur, pas la limite réelle d'une séance.
 const MAX_FILES_PER_BATCH = 40;
 
-// ---------- Créer une séance (métadonnées + premier lot optionnel de fichiers) ----------
-// IMPORTANT : les fichiers ne sont plus obligatoires ici. Pour une séance
-// avec beaucoup de photos/vidéos (ex. 300), le front-end crée la séance
-// SANS fichier, puis les envoie par lots successifs via POST /:id/photos
-// ci-dessous — une seule requête contenant des centaines de fichiers finit
-// par timeout ou saturer la mémoire du serveur (RAM limitée sur Render),
-// ce qui se traduisait par une erreur 502 pour l'admin.
+// ---------- Créer une séance ----------
 router.post("/", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, res) => {
   try {
     const { client_name, client_phone } = req.body || {};
@@ -147,19 +113,14 @@ router.post("/", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, re
     res.status(201).json({
       ok: true,
       session: await sessionSummary(req, created),
-      pin: rawPin // affiché UNE SEULE FOIS ici — jamais récupérable ensuite (seul le hash est stocké)
+      pin: rawPin
     });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-// ---------- Ajouter un lot de photos/vidéos à une séance existante ----------
-// Appelé plusieurs fois de suite par le front-end (voir app.js) pour
-// envoyer une grosse séance (ex. 300 fichiers) sans jamais dépasser
-// MAX_FILES_PER_BATCH dans une seule requête. Chaque appel est indépendant :
-// si l'un d'eux échoue (coupure réseau...), les lots déjà envoyés restent
-// enregistrés et l'admin peut relancer l'envoi sans tout recommencer.
+// ---------- Ajouter un lot de photos/vidéos ----------
 router.post("/:id/photos", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, res) => {
   try {
     const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
@@ -189,14 +150,7 @@ router.get("/:id", async (req, res) => {
   res.json({ session: await sessionSummary(req, s), photos });
 });
 
-// ---------- Enregistrer une vidéo de séance déjà envoyée DIRECTEMENT à Cloudinary ----------
-// Le navigateur de l'admin a uploadé le fichier lui-même vers Cloudinary
-// (voir GET /api/signature/session-video), sans jamais passer par notre
-// serveur. Cette route ne reçoit QUE le résultat de cet upload (identifiant
-// Cloudinary), jamais l'octet vidéo — c'est ce qui règle à la fois la
-// lenteur et les échecs silencieux observés sur les grosses vidéos : avant,
-// chaque vidéo transitait par le process Node de Render (buffer complet en
-// RAM + traitement séquentiel), lent et sujet à timeout sur le plan Free.
+// ---------- Vidéo uploadée directement vers Cloudinary ----------
 router.post("/:id/videos", async (req, res) => {
   try {
     const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
@@ -216,12 +170,7 @@ router.post("/:id/videos", async (req, res) => {
   }
 });
 
-// ---------- Modifier les informations d'une séance existante ----------
-// Utilisé par le bouton "Modifier" côté admin pour corriger une coquille
-// dans le nom/téléphone du client, ajuster le prix de récupération, ou
-// prolonger la date d'expiration — sans jamais toucher aux photos/vidéos
-// déjà envoyées (gérées séparément, voir POST/DELETE /:id/photos ci-dessous).
-// Chaque champ est optionnel : n'envoyer que ce qui change.
+// ---------- Modifier une séance ----------
 router.patch("/:id", async (req, res) => {
   try {
     const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
@@ -234,11 +183,6 @@ router.patch("/:id", async (req, res) => {
     const newPrice = (recovery_price !== undefined && recovery_price !== "") ? Number(recovery_price) : s.recovery_price;
     if (Number.isNaN(newPrice)) return res.status(400).json({ error: "Prix de récupération invalide." });
 
-    // BUG CORRIGÉ : valider la date AVANT d'appeler .toISOString() dessus,
-    // pas après. new Date("texte invalide").toISOString() lève elle-même
-    // une exception ("Invalid time value") — le contrôle placé après ce
-    // calcul ne s'exécutait donc jamais, et l'admin recevait ce message
-    // technique brut au lieu de "Date d'expiration invalide."
     let newExpires = s.expires_at;
     if (expires_at !== undefined && expires_at !== "") {
       const parsed = new Date(expires_at);
@@ -256,13 +200,7 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-// ---------- Retirer une photo/vidéo précise d'une séance ----------
-// Utilisé depuis le panneau "Modifier" pour corriger une séance sans devoir
-// tout supprimer et recommencer (ex. photo floue envoyée par erreur).
-// Supprime le fichier HD privé ET l'aperçu public filigrané associés sur
-// Cloudinary, pas seulement la ligne en base — sinon le fichier resterait
-// stocké (et facturé) indéfiniment côté Cloudinary sans plus jamais être
-// visible nulle part.
+// ---------- Supprimer un média d'une séance ----------
 router.delete("/:id/photos/:photoId", async (req, res) => {
   try {
     const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?").get(req.params.photoId, req.params.id);
@@ -276,8 +214,7 @@ router.delete("/:id/photos/:photoId", async (req, res) => {
   }
 });
 
-// Le PIN n'est jamais récupérable (seul le hash est stocké) — en cas de
-// perte, on en génère un nouveau, retourné une seule fois comme à la création.
+// ---------- Régénérer un code PIN ----------
 router.post("/:id/regenerate-pin", async (req, res) => {
   const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
   if (!s) return res.status(404).json({ error: "Séance introuvable." });
@@ -287,12 +224,13 @@ router.post("/:id/regenerate-pin", async (req, res) => {
   res.json({ ok: true, pin: rawPin });
 });
 
+// ---------- Supprimer une séance complète ----------
 router.delete("/:id", async (req, res) => {
   const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
   if (!s) return res.status(404).json({ error: "Séance introuvable." });
   const photos = await db.prepare("SELECT * FROM session_photos WHERE session_id = ?").all(s.id);
   photos.forEach((p) => { deletePrivateFile(p.file_path); deletePublicFile(p.watermark_path); });
-  await db.prepare("DELETE FROM sessions_photo WHERE id = ?").run(s.id); // cascade : session_photos + recovery_transactions
+  await db.prepare("DELETE FROM sessions_photo WHERE id = ?").run(s.id);
   res.json({ ok: true });
 });
 
