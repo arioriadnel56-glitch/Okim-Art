@@ -48,4 +48,43 @@ router.get("/video", async (req, res) => {
   }
 });
 
+// ---------- Signature pour une vidéo de SÉANCE CLIENT (privée) ----------
+// Différence essentielle avec /video ci-dessus (portfolio, public) : le
+// paramètre "type: authenticated" est inclus dans ce qui est signé, ce qui
+// rend le fichier PRIVÉ sur Cloudinary dès l'upload (jamais d'URL publique
+// directe) — indispensable puisqu'une vidéo de séance ne doit être
+// accessible qu'au client concerné, après vérification de son accès HD
+// (voir routes/gallery.js). Le dossier est le MÊME que celui utilisé par
+// saveVideoPrivate (upload classique via notre serveur, voir utils/upload.js)
+// pour que les deux chemins d'upload produisent des fichiers équivalents.
+const SESSION_VIDEO_FOLDER = "okimart/private/videos";
+
+router.get("/session-video", async (req, res) => {
+  try {
+    const timestamp = Math.round(Date.now() / 1000);
+    const paramsToSign = {
+      timestamp,
+      folder: SESSION_VIDEO_FOLDER,
+      type: "authenticated"
+    };
+
+    const signature = cloudinary.utils.api_sign_request(
+      paramsToSign,
+      process.env.CLOUDINARY_API_SECRET
+    );
+
+    res.json({
+      signature,
+      timestamp,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      folder: SESSION_VIDEO_FOLDER,
+      type: "authenticated"
+    });
+  } catch (e) {
+    console.error("Erreur de signature Cloudinary (vidéo de séance) :", e);
+    res.status(500).json({ error: "Impossible de générer l'autorisation d'upload." });
+  }
+});
+
 module.exports = router;
