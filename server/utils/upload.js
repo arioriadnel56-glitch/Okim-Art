@@ -192,6 +192,21 @@ async function saveVideoPrivate(buffer, originalname) {
   return makeRef("video", result.public_id, result.version);
 }
 
+/**
+ * Construit la référence encodée pour une vidéo de séance déjà envoyée
+ * DIRECTEMENT à Cloudinary depuis le navigateur de l'admin (voir
+ * GET /api/signature/session-video et POST /:id/videos dans
+ * routes/admin/sessions.js) — MÊME dossier et MÊME type ("authenticated")
+ * que saveVideoPrivate ci-dessus, pour que le reste de l'application
+ * (streaming, suppression...) ne voie aucune différence entre les deux
+ * chemins d'upload. Cette voie existe car faire transiter une vidéo lourde
+ * par notre propre serveur Express (RAM limitée + timeout sur Render Free)
+ * est lent et peu fiable — voir le commentaire en tête de signature.js.
+ */
+function registerPrivateVideoRef(publicId, version) {
+  return makeRef("video", publicId, version);
+}
+
 // ---------------------------------------------------------------
 // Fichiers logiciels (installeurs, archives...) — stockage privé,
 // jamais servi par une URL publique directe (voir routes de
@@ -263,6 +278,7 @@ module.exports = {
   savePublicVersion,
   saveVideoPublic,
   saveVideoPrivate,
+  registerPrivateVideoRef,
   isVideoFile,
   assertMediaSize,
   deletePublicFile,
