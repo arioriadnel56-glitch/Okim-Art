@@ -1099,6 +1099,105 @@
     return batch;
   }
 
+  // Envoie une liste de fichiers vers une séance (nouvelle OU existante).
+  // Les PHOTOS passent par lots via notre serveur (elles ont besoin d'une
+  // version filigranée générée côté serveur, voir POST /:id/photos). Les
+  // VIDÉOS partent DIRECTEMENT de cet appareil vers Cloudinary (voir
+  // uploadSessionVideoDirect ci-dessous) — jamais par notre serveur, ce qui
+  // règle à la fois la lenteur et les échecs silencieux sur les grosses
+  // vidéos (auparavant, chaque vidéo était bufferisée en RAM par le
+  // serveur puis traitée séquentiellement, lent et sujet à timeout sur
+  // Render Free).
+  //
+  // Pour garder une reprise fiable par simple INDEX (alreadySent, un
+  // nombre) même avec un mélange photos/vidéos, on trie d'abord — toutes
+  // les photos, puis toutes les vidéos. Reprendre à l'index N retombe donc
+  // toujours exactement sur le même point, quel que soit l'ordre dans
+  // lequel l'admin a sélectionné ses fichiers.
+  // onProgress(sentCount, total, videoPct) est appelé avant chaque étape ;
+  // videoPct (0-100) n'est renseigné que pendant l'envoi direct d'une vidéo.
+  async function uploadFilesToSession(sessionId, files, alreadySent, onProgress) {
+    const isVideo = (f) => !!(f.type && f.type.startsWith("video/"));
+    const ordered = files.slice().sort((a, b) => (isVideo(a) === isVideo(b)) ? 0 : (isVideo(a) ? 1 : -1));
+
+    let sent = alreadySent || 0;
+    while (sent < ordered.length) {
+      if (isVideo(ordered[sent])) {
+        if (onProgress) onProgress(sent, ordered.length, 0);
+        const sig = await getSessionVideoSignature();
+        const result = await uploadSessionVideoDirect(ordered[sent], sig, (pct) => {
+          if (onProgress) onProgress(sent, ordered.length, pct);
+        });
+        await apiJson(`/sessions/${sessionId}/videos`, "POST", {
+          titre: (ordered[sent].name || "Vidéo").replace(/\.[a-zA-Z0-9]+$/, ""),
+          public_id: result.public_id,
+          version: result.version
+        });
+        sent += 1;
+      } else {
+        // Regroupe uniquement la série de photos consécutives à partir
+        // d'ici (le tri garantit qu'elles précèdent toutes les vidéos).
+        let end = sent;
+        while (end < ordered.length && !isVideo(ordered[end])) end++;
+        const batch = nextSessionBatch(ordered.slice(sent, end));
+        if (onProgress) onProgress(sent, ordered.length);
+        const fd = new FormData();
+        batch.forEach((f) => fd.append("files", f));
+        await apiForm(`/sessions/${sessionId}/photos`, "POST", fd);
+        sent += batch.length;
+      }
+    }
+    if (onProgress) onProgress(sent, ordered.length);
+    return sent;
+  }
+
+  // Récupère l'autorisation d'upload direct pour UNE vidéo de séance
+  // (privée — voir GET /api/signature/session-video côté serveur). Route
+  // hors du préfixe /api/admin : on n'utilise donc pas le helper api().
+  async function getSessionVideoSignature() {
+    const res = await fetch("/api/signature/session-video");
+    if (res.status === 401) { window.location.href = "login.html"; throw new Error("Non authentifié"); }
+    if (!res.ok) {
+      let msg = "Impossible d'obtenir l'autorisation d'upload vidéo.";
+      try { const data = await res.json(); if (data && data.error) msg = data.error; } catch (e) { /* réponse non-JSON */ }
+      throw new Error(msg);
+    }
+    return res.json(); // { signature, timestamp, apiKey, cloudName, folder, type }
+  }
+
+  // Envoie UNE vidéo de séance directement à Cloudinary (jamais à notre
+  // serveur). XMLHttpRequest plutôt que fetch() : c'est le seul des deux à
+  // exposer un évènement de progression sur l'ENVOI (fetch ne donne de
+  // progression qu'en RÉCEPTION). Le champ "type" DOIT être renvoyé tel
+  // quel si la signature l'incluait (cas des vidéos de séance, privées) —
+  // sinon Cloudinary recalcule une signature différente de celle reçue et
+  // rejette l'upload.
+  function uploadSessionVideoDirect(file, sig, onProgress) {
+    return new Promise((resolve, reject) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("api_key", sig.apiKey);
+      fd.append("timestamp", sig.timestamp);
+      fd.append("signature", sig.signature);
+      fd.append("folder", sig.folder);
+      if (sig.type) fd.append("type", sig.type);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `https://api.cloudinary.com/v1_1/${sig.cloudName}/video/upload`);
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      });
+      xhr.onload = () => {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (e) { /* réponse non-JSON */ }
+        if (xhr.status >= 200 && xhr.status < 300 && data && data.public_id) resolve(data);
+        else reject(new Error((data && data.error && data.error.message) || "Échec de l'envoi de la vidéo vers Cloudinary."));
+      };
+      xhr.onerror = () => reject(new Error("Connexion à Cloudinary interrompue pendant l'envoi de la vidéo — vérifiez votre réseau et réessayez."));
+      xhr.send(fd);
+    });
+  }
+
   // Conserve l'état d'un envoi en cours (séance déjà créée, nombre de
   // fichiers déjà envoyés) pour permettre une REPRISE si une requête
   // échoue en cours de route (coupure réseau...), au lieu de forcer à
@@ -1180,19 +1279,15 @@
         throw new Error("La séance n'a pas pu être créée. Veuillez réessayer.");
       }
 
-      // 2) Envoyer les fichiers par petits lots successifs, en reprenant
-      // là où un éventuel envoi précédent s'était arrêté.
-      const remaining = sessionFiles.slice(activeSessionUpload.sentCount);
-      let i = 0;
-      while (i < remaining.length) {
-        const batch = nextSessionBatch(remaining.slice(i));
-        btn.textContent = `Envoi… (${activeSessionUpload.sentCount}/${sessionFiles.length})`;
-        const fd = new FormData();
-        batch.forEach((f) => fd.append("files", f));
-        await apiForm(`/sessions/${activeSessionUpload.sessionId}/photos`, "POST", fd);
-        activeSessionUpload.sentCount += batch.length;
-        i += batch.length;
-      }
+      // 2) Envoyer les fichiers (photos par lots via le serveur, vidéos en
+      // direct vers Cloudinary), en reprenant là où un éventuel envoi
+      // précédent s'était arrêté.
+      await uploadFilesToSession(activeSessionUpload.sessionId, sessionFiles, activeSessionUpload.sentCount, (sent, total, videoPct) => {
+        activeSessionUpload.sentCount = sent;
+        btn.textContent = videoPct != null
+          ? `Envoi vidéo… ${videoPct}% (${sent}/${sessionFiles.length})`
+          : `Envoi… (${sent}/${sessionFiles.length})`;
+      });
 
       // 3) Tous les fichiers sont passés : afficher le lien + PIN.
       document.getElementById("form-session").style.display = "none";
@@ -1254,11 +1349,14 @@
         <td>${dateFr(s.expires_at)}</td>
         <td>${s.has_hd_access ? '<span class="admin-tag ok">Oui</span>' : '<span class="admin-tag warn">Non (payant)</span>'}</td>
         <td class="admin-row-actions">
+          <button class="admin-icon-btn" data-edit="${s.id}">Modifier</button>
           <button class="admin-icon-btn" data-copy="${esc(s.link)}">Copier le lien</button>
           <button class="admin-icon-btn" data-regen="${s.id}">Nouveau PIN</button>
           <button class="admin-icon-btn danger" data-del="${s.id}">Supprimer</button>
         </td>
       </tr>`).join("") : `<tr><td colspan="6" class="admin-table-empty">${sessions === sessionsCache ? "Aucune séance créée." : "Aucune séance ne correspond à cette recherche."}</td></tr>`;
+
+    tbody.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => openEditSessionPanel(b.dataset.edit)));
 
     tbody.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copié ✓"; setTimeout(() => b.textContent = "Copier le lien", 1200); }
@@ -1277,6 +1375,124 @@
       catch (err) { alert(err.message); }
     }));
   }
+
+  /* ---------- Panneau "Modifier" une séance existante ----------
+     Permet de corriger le nom/téléphone du client, ajuster le prix de
+     récupération ou la date d'expiration, voir d'un coup d'œil ce qui a
+     déjà été envoyé (aperçus), retirer un fichier précis, et en ajouter
+     d'autres — sans jamais devoir supprimer/recréer toute la séance. */
+  let editingSessionId = null;
+
+  async function openEditSessionPanel(id) {
+    const panel = document.getElementById("panel-session-edit");
+    panel.classList.add("open");
+    document.getElementById("session-edit-photos-grid").innerHTML = '<p class="admin-muted">Chargement…</p>';
+    try {
+      const { session, photos } = await api("/sessions/" + id);
+      editingSessionId = session.id;
+      document.getElementById("session-edit-client-name").value = session.client_name || "";
+      document.getElementById("session-edit-client-phone").value = session.client_phone || "";
+      document.getElementById("session-edit-recovery-price").value = session.recovery_price != null ? session.recovery_price : "";
+      document.getElementById("session-edit-expires").value = (session.expires_at || "").slice(0, 10);
+      document.getElementById("session-edit-link").value = session.link;
+      renderEditPhotosGrid(photos);
+    } catch (err) {
+      alert(err.message);
+      panel.classList.remove("open");
+    }
+  }
+
+  function renderEditPhotosGrid(photos) {
+    const grid = document.getElementById("session-edit-photos-grid");
+    if (!photos.length) {
+      grid.innerHTML = '<p class="admin-muted">Aucune photo/vidéo dans cette séance.</p>';
+      return;
+    }
+    // Pour les vidéos : pas d'aperçu public (voir insertSessionFiles côté
+    // serveur — aucun filigrane vidéo n'est généré), donc une carte simple
+    // avec le titre plutôt qu'une vraie vignette.
+    grid.innerHTML = photos.map((p) => `
+      <figure class="admin-session-photo" data-photo-id="${p.id}">
+        ${p.type === "video"
+          ? `<div class="admin-session-photo-video">🎬<span>${esc(p.titre || "Vidéo")}</span></div>`
+          : `<img src="${esc(p.watermark_path)}" alt="${esc(p.titre || "Photo")}" loading="lazy">`}
+        <button type="button" class="admin-session-photo-remove" data-remove-photo="${p.id}" title="Retirer de la séance">×</button>
+      </figure>`).join("");
+
+    grid.querySelectorAll("[data-remove-photo]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Retirer définitivement ce fichier de la séance ? Le client ne le verra plus.")) return;
+        btn.disabled = true;
+        try {
+          await api(`/sessions/${editingSessionId}/photos/${btn.dataset.removePhoto}`, { method: "DELETE" });
+          btn.closest("[data-photo-id]").remove();
+          await loadSessions(); // met à jour le compteur photos/vidéos affiché dans le tableau
+          if (!grid.querySelector("[data-photo-id]")) grid.innerHTML = '<p class="admin-muted">Aucune photo/vidéo dans cette séance.</p>';
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  document.getElementById("cancel-session-edit").addEventListener("click", () => {
+    document.getElementById("panel-session-edit").classList.remove("open");
+    editingSessionId = null;
+  });
+
+  document.getElementById("form-session-edit").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!editingSessionId) return;
+    const btn = document.getElementById("session-edit-save-btn");
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = "Enregistrement…";
+    try {
+      await apiJson(`/sessions/${editingSessionId}`, "PATCH", {
+        client_name: document.getElementById("session-edit-client-name").value,
+        client_phone: document.getElementById("session-edit-client-phone").value,
+        recovery_price: document.getElementById("session-edit-recovery-price").value,
+        expires_at: document.getElementById("session-edit-expires").value
+      });
+      document.getElementById("panel-session-edit").classList.remove("open");
+      editingSessionId = null;
+      await loadSessions();
+      await loadDashboard();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  });
+
+  // Ajout de fichiers à une séance existante, directement depuis le
+  // panneau "Modifier" — réutilise uploadFilesToSession() (même fiabilité
+  // par lots que la création, voir plus haut) au lieu d'une logique séparée.
+  document.getElementById("session-edit-add-trigger").addEventListener("click", () => {
+    document.getElementById("session-edit-add-files").click();
+  });
+  document.getElementById("session-edit-add-files").addEventListener("change", async function () {
+    if (!editingSessionId || !this.files.length) return;
+    const files = Array.from(this.files);
+    const trigger = document.getElementById("session-edit-add-trigger");
+    const original = trigger.textContent;
+    trigger.disabled = true;
+    try {
+      await uploadFilesToSession(editingSessionId, files, 0, (sent, total, videoPct) => {
+        trigger.textContent = videoPct != null
+          ? `Envoi vidéo… ${videoPct}% (${sent}/${total})`
+          : `Envoi… (${sent}/${total})`;
+      });
+      const { photos } = await api("/sessions/" + editingSessionId);
+      renderEditPhotosGrid(photos);
+      await loadSessions();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      trigger.disabled = false; trigger.textContent = original;
+      this.value = ""; // permet de resélectionner les mêmes fichiers si besoin (ex. après une erreur)
+    }
+  });
   const sessionSearchInput = document.getElementById("session-search");
   // Recherche insensible aux accents : sur un clavier de téléphone, on tape
   // souvent "aicha" sans réfléchir à l'accent de "Aïcha" — sans cette
