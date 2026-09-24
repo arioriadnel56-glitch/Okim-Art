@@ -268,6 +268,16 @@ function deletePrivateFile(ref) {
   if (isCloudinaryRef(ref)) { destroyRef(ref).catch(() => {}); return; }
   // Ancien chemin local relatif : idem, sans effet (plus de disque persistant).
 }
+// Dans utils/upload.js
+function assertMediaSize(file) {
+  // Supprimez le throw new Error() sur la taille ou augmentez la limite :
+  // Ex: autoriser jusqu'à 100 Mo par fichier
+  const MAX_SIZE = 100 * 1024 * 1024; 
+  if (file.size > MAX_SIZE) {
+    throw new Error(`Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)} Mo). Limite : 100 Mo.`);
+  }
+}
+
 
 module.exports = {
   uploadMemory,
