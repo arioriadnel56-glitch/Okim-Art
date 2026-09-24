@@ -1,5 +1,5 @@
 // ============================================================
-// download.js — téléchargement sécurisé par jeton opaque
+// download.js — téléchargement sécurisé par proxy streaming
 // ============================================================
 const express = require("express");
 const path = require("path");
@@ -7,7 +7,7 @@ const fs = require("fs");
 const { db } = require("../db");
 const { getValidToken, consumeToken } = require("../utils/tokens");
 const { PERSIST_ROOT } = require("../utils/upload");
-const { isCloudinaryRef, signedPrivateUrl } = require("../utils/cloudinaryStorage");
+const { isCloudinaryRef, openPrivateStream } = require("../utils/cloudinaryStorage");
 
 const router = express.Router();
 
@@ -21,35 +21,8 @@ router.get("/:token", async (req, res) => {
 
     // 2. Récupération du produit lié
     const product = await db.prepare("SELECT * FROM products WHERE id = ?").get(row.product_id);
-    if (!product) {
-      return res.status(404).json({ error: "Produit ou fichier introuvable." });
-    }
-
-    // 3. VÉRIFICATION DÉFENSIVE : S'assurer que le fichier original existe et n'est pas vide
-    if (!product.fichier_original || product.fichier_original.trim() === "") {
-      return res.status(404).send(`
-        <!DOCTYPE html>
-        <html lang="fr">
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Fichier indisponible - OKIM ART</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; padding: 40px 20px; color: #333; line-height: 1.6; }
-            .card { max-width: 480px; margin: 0 auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); background: #fff; }
-            h2 { color: #e53935; margin-top: 0; }
-            p { color: #666; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h2>Fichier en cours de préparation</h2>
-            <p>Le fichier haute résolution associé à votre commande est en cours de finalisation par l'équipe OKIM ART.</p>
-            <p>Veuillez réessayer dans quelques instants ou contacter le support.</p>
-          </div>
-        </body>
-        </html>
-      `);
+    if (!product || !product.fichier_original || product.fichier_original.trim() === "") {
+      return res.status(404).json({ error: "Fichier associé introuvable ou en cours de préparation." });
     }
 
     // Normalisation du nom de fichier
@@ -58,27 +31,44 @@ router.get("/:token", async (req, res) => {
     const ext = isVideo ? ".mp4" : ".jpg";
     const finalFilename = `okim-art-${safeTitre}${ext}`;
 
+    // Consommation du jeton unique avant d'initier le transfert
+    await consumeToken(req.params.token);
+
     // ------------------------------------------------------------
-    // CAS A : Fichier hébergé sur Cloudinary (Migration)
+    // CAS A : Fichier hébergé sur Cloudinary (Proxy Streaming CORS-safe)
     // ------------------------------------------------------------
     if (isCloudinaryRef(product.fichier_original)) {
-      let url;
+      let stream;
       try {
-        url = await signedPrivateUrl(product.fichier_original, finalFilename, {
-          inline: false, // Force le téléchargement (attachment)
+        stream = await openPrivateStream(product.fichier_original, {
           onRepair: (repairedRef) =>
             db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
         });
       } catch (e) {
-        console.error("[download] Erreur signature Cloudinary :", e.message);
-        return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible sur le stockage." });
+        console.error("[download] Erreur ouverture flux Cloudinary :", e.message);
+        return res.status(404).json({ error: "Ce fichier n'est plus disponible sur le stockage distant." });
       }
 
-      // Consommation du jeton unique UNIQUEMENT après succès de la signature
-      await consumeToken(req.params.token);
+      if (stream.statusCode) res.status(stream.statusCode);
 
-      // Redirection HTTP vers l'URL signée de livraison Cloudinary
-      return res.redirect(url);
+      // Forcer l'en-tête de téléchargement direct pour iOS/Android sur notre propre domaine
+      res.setHeader("Content-Disposition", `attachment; filename="${finalFilename}"`);
+
+      const headersToRelay = ["content-type", "content-length", "accept-ranges", "content-range"];
+      headersToRelay.forEach((h) => {
+        if (stream.headers[h]) res.setHeader(h, stream.headers[h]);
+      });
+
+      if (!stream.headers["content-type"]) {
+        res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
+      }
+
+      // Sécurité anti-fuite de socket si le client annule le téléchargement
+      req.on("close", () => {
+        if (stream && typeof stream.destroy === "function") stream.destroy();
+      });
+
+      return stream.pipe(res);
     }
 
     // ------------------------------------------------------------
@@ -86,7 +76,6 @@ router.get("/:token", async (req, res) => {
     // ------------------------------------------------------------
     const fullPath = path.join(PERSIST_ROOT, product.fichier_original);
 
-    // Vérification d'existence sur le disque local
     if (!fs.existsSync(fullPath)) {
       console.error(`[download] Fichier local introuvable : ${fullPath}`);
       return res.status(404).json({ error: "Ce fichier n'est plus disponible sur le serveur." });
@@ -97,17 +86,13 @@ router.get("/:token", async (req, res) => {
       return res.status(500).json({ error: "Le fichier source est vide sur le serveur." });
     }
 
-    // Consommation du jeton unique
-    await consumeToken(req.params.token);
-
-    // Configuration des en-têtes de livraison
-    const contentType = isVideo ? "video/mp4" : "image/jpeg";
-    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
     res.setHeader("Content-Length", stat.size);
+    res.setHeader("Content-Disposition", `attachment; filename="${finalFilename}"`);
 
     return res.download(fullPath, finalFilename, (err) => {
       if (err && !res.headersSent) {
-        console.error("[download] Erreur lors du res.download local :", err);
+        console.error("[download] Erreur res.download local :", err);
         res.status(500).json({ error: "Erreur lors du transfert du fichier." });
       }
     });
