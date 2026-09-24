@@ -1,12 +1,10 @@
 // ============================================================
 // gallery.js (routes) — accès public à la galerie client
 // ============================================================
-// Toute la confiance repose sur le code PIN (hashé, jamais stocké en
-// clair) et sur le jeton court délivré après validation — jamais sur le
-// numéro de téléphone du client, à la demande explicite du studio.
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const path = require("path");
+const fs = require("fs");
 const rateLimit = require("express-rate-limit");
 const { ipKeyGenerator } = require("express-rate-limit");
 const { db } = require("../db");
@@ -18,8 +16,7 @@ const { isCloudinaryRef, signedPrivateUrl, openPrivateStream, parseRef } = requi
 
 const router = express.Router();
 
-// Max 5 tentatives de PIN / 15 min, par IP ET par séance (deux clients
-// différents sur la même IP ne se bloquent pas mutuellement).
+// Max 5 tentatives de PIN / 15 min, par IP ET par séance
 const pinLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 5,
@@ -33,7 +30,7 @@ async function photoList(sessionId) {
   return db.prepare("SELECT id, titre, watermark_path, type FROM session_photos WHERE session_id = ?").all(sessionId);
 }
 
-/** Réécrit une fois la référence Cloudinary réparée (version retrouvée) sur la photo/vidéo de séance concernée. */
+/** Réécrit une fois la référence Cloudinary réparée sur la photo/vidéo concernée. */
 function repairSessionPhotoRef(photoId) {
   return (repairedRef) => db.prepare("UPDATE session_photos SET file_path = ? WHERE id = ?").run(repairedRef, photoId);
 }
@@ -52,235 +49,256 @@ function publicSessionInfo(session) {
 
 // ---------- Validation du code PIN ----------
 router.post("/:token/verify-pin", pinLimiter, async (req, res) => {
-  const { pin } = req.body || {};
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (!pin || !bcrypt.compareSync(String(pin), session.pin_code_hash)) {
-    return res.status(401).json({ error: "Code PIN incorrect." });
+  try {
+    const { pin } = req.body || {};
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    
+    if (!pin || !bcrypt.compareSync(String(pin), session.pin_code_hash)) {
+      return res.status(401).json({ error: "Code PIN incorrect." });
+    }
+    
+    const galleryToken = signToken({ type: "gallery", session_id: session.id, access_token: session.access_token }, "2h");
+    res.json({ ok: true, token: galleryToken, session: publicSessionInfo(session), photos: await photoList(session.id) });
+  } catch (err) {
+    console.error("Erreur POST verify-pin :", err);
+    res.status(500).json({ error: "Erreur serveur lors de la vérification du code PIN." });
   }
-  const galleryToken = signToken({ type: "gallery", session_id: session.id, access_token: session.access_token }, "2h");
-  res.json({ ok: true, token: galleryToken, session: publicSessionInfo(session), photos: await photoList(session.id) });
 });
 
-// ---------- Détail (revalidation, ex. après retour de paiement) ----------
+// ---------- Détail de séance ----------
 router.get("/:token", requireGalleryAccess, async (req, res) => {
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  res.json({ session: publicSessionInfo(session), photos: await photoList(session.id) });
+  try {
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    res.json({ session: publicSessionInfo(session), photos: await photoList(session.id) });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur lors de la récupération de la galerie." });
+  }
 });
 
 // ---------- Téléchargement ZIP des originaux HD ----------
 router.get("/:token/download", requireGalleryAccess, async (req, res) => {
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (!hasHdAccess(session)) {
-    return res.status(403).json({ error: "Accès HD expiré ou non débloqué. Utilisez « Récupérer mes photos » pour y accéder à nouveau." });
-  }
-  const photos = await db.prepare("SELECT id, titre, file_path, type FROM session_photos WHERE session_id = ?").all(session.id);
-  if (!photos.length) return res.status(404).json({ error: "Aucune photo dans cette séance." });
-  const safeName = (session.client_name || "seance").replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "seance";
-  streamSessionZip(photos, `okim-art-${safeName}.zip`, res).catch((e) => {
+  try {
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    
+    if (!hasHdAccess(session)) {
+      return res.status(403).json({ error: "Accès HD expiré ou non débloqué. Utilisez « Récupérer mes photos » pour y accéder à nouveau." });
+    }
+
+    const photos = await db.prepare("SELECT id, titre, file_path, type FROM session_photos WHERE session_id = ?").all(session.id);
+    if (!photos.length) return res.status(404).json({ error: "Aucune photo dans cette séance." });
+
+    const safeName = (session.client_name || "seance").replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "seance";
+    
+    await streamSessionZip(photos, `okim-art-${safeName}.zip`, res);
+  } catch (e) {
     console.error("[gallery] échec de génération du ZIP :", e.message);
-    if (!res.headersSent) res.status(500).json({ error: "Échec de la génération du ZIP." });
-  });
+    if (!res.headersSent) res.status(500).json({ error: "Échec de la génération de l'archive ZIP." });
+  }
 });
 
-// ---------- Récupération en flux (proxy) pour le bouton "Enregistrer" (saveMedia côté client) ----------
-// Contrairement à /view (redirection directe vers Cloudinary — parfaite pour
-// un simple <img>/<video src>), cette route fait transiter les octets par
-// notre propre serveur. Nécessaire car le bouton "Enregistrer" utilise
-// fetch()+blob() pour proposer le partage natif iOS ("Enregistrer l'image/
-// vidéo") — et un fetch() vers une redirection cross-origin (res.cloudinary.com)
-// se heurte aux règles CORS, contrairement à un simple affichage. En restant
-// sur notre propre domaine, plus aucun souci CORS. Le flux est piped
-// directement (jamais bufferisé entièrement en RAM).
+// ---------- Proxy streaming pour bouton "Enregistrer" (CORS-safe) ----------
 router.get("/:token/photos/:photoId/blob", requireGalleryAccess, async (req, res) => {
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (!hasHdAccess(session)) {
-    return res.status(403).json({ error: "Accès HD expiré ou non débloqué." });
-  }
-
-  const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?")
-    .get(req.params.photoId, session.id);
-  if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
-
   try {
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    if (!hasHdAccess(session)) {
+      return res.status(403).json({ error: "Accès HD expiré ou non débloqué." });
+    }
+
+    const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?")
+      .get(req.params.photoId, session.id);
+    if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
+
     if (isCloudinaryRef(photo.file_path)) {
       const stream = await openPrivateStream(photo.file_path, { onRepair: repairSessionPhotoRef(photo.id) });
-      res.setHeader("Content-Type", stream.headers["content-type"] || (photo.type === "video" ? "video/mp4" : "image/jpeg"));
-      // BUG CORRIGÉ : la taille totale du fichier (fournie par Cloudinary via
-      // content-length) n'était jamais retransmise au navigateur. Sans elle,
-      // le fetch() côté client (voir fetchWithProgress dans gallery.html) ne
-      // peut jamais calculer de vrai pourcentage et retombe systématiquement
-      // sur l'anneau de progression "indéterminé" (qui tourne sans jamais
-      // afficher de %) — exactement le symptôme observé.
-      if (stream.headers["content-length"]) {
-        res.setHeader("Content-Length", stream.headers["content-length"]);
+
+      // Transposer les en-têtes clés pour le support streaming mobile / iOS Range requests
+      if (stream.statusCode) res.status(stream.statusCode);
+
+      const headersToRelay = ["content-type", "content-length", "accept-ranges", "content-range"];
+      headersToRelay.forEach((h) => {
+        if (stream.headers[h]) res.setHeader(h, stream.headers[h]);
+      });
+
+      if (!stream.headers["content-type"]) {
+        res.setHeader("Content-Type", photo.type === "video" ? "video/mp4" : "image/jpeg");
       }
-      stream.pipe(res);
+
+      // Destruction du flux amont en cas de fermeture anticipée de la connexion client
+      req.on("close", () => {
+        if (stream && typeof stream.destroy === "function") stream.destroy();
+      });
+
+      return stream.pipe(res);
     } else {
-      // Compatibilité ascendante : ancien chemin local.
+      // Stockage local fallback
       const fullPath = path.join(PERSIST_ROOT, photo.file_path);
-      res.sendFile(fullPath);
+      if (!fs.existsSync(fullPath)) {
+        return res.status(404).json({ error: "Le fichier local n'existe plus sur le serveur." });
+      }
+      return res.sendFile(fullPath);
     }
   } catch (e) {
-    res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
+    console.error("[gallery] Erreur /blob :", e.message);
+    if (!res.headersSent) {
+      res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible." });
+    }
   }
 });
 
-// ---------- Affichage plein écran d'UN SEUL fichier (photo ou vidéo) ----------
-// Contrairement à /download ci-dessus, ce lien n'est PAS envoyé en pièce
-// jointe forcée : le fichier s'affiche normalement, pour être ouvert dans la
-// visionneuse plein écran de la page (voir gallery.html). C'est ce qui
-// permet l'appui long "Enregistrer l'image/la vidéo" sur iPhone — un
-// téléchargement forcé atterrit dans l'appli Fichiers, jamais dans Photos.
+// ---------- Affichage visionneuse plein écran ----------
 router.get("/:token/photos/:photoId/view", requireGalleryAccess, async (req, res) => {
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (!hasHdAccess(session)) {
-    return res.status(403).json({ error: "Accès HD expiré ou non débloqué." });
-  }
+  try {
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    if (!hasHdAccess(session)) {
+      return res.status(403).json({ error: "Accès HD expiré ou non débloqué." });
+    }
 
-  const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?")
-    .get(req.params.photoId, session.id);
-  if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
+    const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?")
+      .get(req.params.photoId, session.id);
+    if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
 
-  if (isCloudinaryRef(photo.file_path)) {
-    try {
+    if (isCloudinaryRef(photo.file_path)) {
       const url = await signedPrivateUrl(photo.file_path, null, { inline: true, onRepair: repairSessionPhotoRef(photo.id) });
       return res.redirect(url);
-    } catch (e) {
-      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
     }
-  }
 
-  // Compatibilité ascendante : ancien chemin local — affichage direct du fichier.
-  const fullPath = path.join(PERSIST_ROOT, photo.file_path);
-  res.sendFile(fullPath, (err) => {
-    if (err && !res.headersSent) {
-      res.status(404).json({ error: "Ce fichier n'est plus disponible. Contactez le support." });
+    const fullPath = path.join(PERSIST_ROOT, photo.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: "Ce fichier local n'existe plus." });
     }
-  });
-});
 
-// ---------- Téléchargement d'UN SEUL fichier (photo ou vidéo) ----------
-// Contrairement au ZIP ci-dessus, ce lien est fait pour être ouvert
-// directement par le navigateur (pas un fetch+blob) : sur mobile, un
-// fichier image/vidéo téléchargé individuellement de cette façon est
-// généralement repris automatiquement par l'appli Galerie/Photos du
-// téléphone (Android en particulier) — contrairement à un .zip, que le
-// téléphone range dans "Fichiers", inutilisable tel quel pour un client.
-router.get("/:token/photos/:photoId/download", requireGalleryAccess, async (req, res) => {
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (!hasHdAccess(session)) {
-    return res.status(403).json({ error: "Accès HD expiré ou non débloqué. Utilisez « Récupérer mes photos » pour y accéder à nouveau." });
-  }
-
-  // Le filtre "AND session_id = ?" est essentiel : sans lui, un client pourrait
-  // deviner l'id d'une photo appartenant à une AUTRE séance et la télécharger
-  // avec son propre jeton (faille de type IDOR).
-  const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?")
-    .get(req.params.photoId, session.id);
-  if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
-
-  const safeTitre = (photo.titre || (photo.type === "video" ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-");
-  // L'extension vient de la vraie nature du fichier (référence Cloudinary),
-  // jamais de la seule colonne "type" en base — voir le correctif de
-  // données dans db.js : cette colonne avait une valeur par défaut ('photo')
-  // qui a pu mal étiqueter de vraies vidéos uploadées avant son ajout.
-  const ext = isCloudinaryRef(photo.file_path)
-    ? (parseRef(photo.file_path).resourceType === "video" ? ".mp4" : ".jpg")
-    : (photo.type === "video" ? ".mp4" : ".jpg");
-
-  if (isCloudinaryRef(photo.file_path)) {
-    try {
-      const url = await signedPrivateUrl(photo.file_path, `okim-art-${safeTitre}${ext}`, { onRepair: repairSessionPhotoRef(photo.id) });
-      return res.redirect(url);
-    } catch (e) {
-      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
-    }
-  }
-
-  // Compatibilité ascendante : ancien chemin local (donnée antérieure à la migration Cloudinary).
-  const fullPath = path.join(PERSIST_ROOT, photo.file_path);
-  res.download(fullPath, `okim-art-${safeTitre}${ext}`, (err) => {
-    if (err && !res.headersSent) {
-      res.status(404).json({ error: "Ce fichier n'est plus disponible. Contactez le support." });
-    }
-  });
-});
-
-// ---------- Récupération payante d'une séance archivée (init KKiaPay) ----------
-router.post("/:token/recover", requireGalleryAccess, async (req, res) => {
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (hasHdAccess(session)) return res.json({ ok: true, already_unlocked: true });
-
-  const enabled = (await getSetting("kkiapay_enabled", "0")) === "1";
-  const publicKey = await getSetting("kkiapay_public_key", "");
-  if (!enabled || !publicKey) {
-    return res.status(400).json({ error: "Le paiement en ligne n'est pas encore activé sur cette plateforme. Contactez OKIM ART directement." });
-  }
-  res.json({
-    ok: true,
-    amount: session.recovery_price,
-    kkiapay: { public_key: publicKey, sandbox: (await getSetting("kkiapay_sandbox", "1")) !== "0" },
-    reference: session.access_token
-  });
-});
-
-// ---------- Confirmation du paiement (déclenchée par le navigateur du client) ----------
-router.post("/:token/kkiapay-confirm", requireGalleryAccess, async (req, res) => {
-  const { transactionId } = req.body || {};
-  if (!transactionId) return res.status(400).json({ error: "Identifiant de transaction manquant." });
-
-  const session = await getSessionByToken(req.params.token);
-  if (!session) return res.status(404).json({ error: "Galerie introuvable." });
-  if (hasHdAccess(session)) return res.json({ ok: true, hd_unlocked_until: session.hd_unlocked_until });
-
-  const event = await db.prepare("SELECT * FROM kkiapay_events WHERE transaction_id = ?").get(transactionId);
-  if (!event || !event.success) {
-    return res.status(202).json({ ok: false, pending: true, message: "Vérification du paiement en cours…" });
-  }
-  if (event.amount !== null && Number(event.amount) !== Number(session.recovery_price)) {
-    return res.status(400).json({ error: "Le montant de la transaction ne correspond pas au tarif de récupération." });
-  }
-
-  const hdHours = Number(await getSetting("gallery_hd_access_hours", "48"));
-  const unlockedUntil = addHours(new Date(), hdHours).toISOString();
-
-  // FAILLE CORRIGÉE (rejeu de transaction — même défaut que celui déjà
-  // corrigé sur les commandes boutique, voir routes/kkiapay.js) : la
-  // contrainte UNIQUE sur transaction_reference existe déjà en base, mais
-  // "ON CONFLICT DO UPDATE" l'ignorait complètement — un même transactionId
-  // "success" pouvait donc débloquer l'accès HD de N'IMPORTE QUELLE AUTRE
-  // séance utilisant le même tarif de récupération, sans repayer. On tente
-  // maintenant une insertion simple ; en cas de conflit, on vérifie que la
-  // transaction appartient bien À CETTE séance avant de continuer.
-  try {
-    await db.prepare(`
-      INSERT INTO recovery_transactions (session_id, transaction_reference, amount, status)
-      VALUES (?,?,?, 'success')
-    `).run(session.id, transactionId, event.amount ?? session.recovery_price);
-  } catch (e) {
-    if (e.code === "23505") {
-      const existing = await db.prepare("SELECT session_id FROM recovery_transactions WHERE transaction_reference = ?").get(transactionId);
-      if (!existing || existing.session_id !== session.id) {
-        return res.status(409).json({ error: "Cette transaction a déjà été utilisée pour une autre galerie. Contactez OKIM ART si vous pensez qu'il s'agit d'une erreur." });
+    res.sendFile(fullPath, (err) => {
+      if (err && !res.headersSent) {
+        res.status(404).json({ error: "Ce fichier n'est plus disponible." });
       }
-      // Même transaction, même séance : nouvelle tentative légitime (ex.
-      // rechargement de page après un premier succès) — on continue.
-      await db.prepare("UPDATE recovery_transactions SET status = 'success' WHERE transaction_reference = ? AND session_id = ?").run(transactionId, session.id);
-    } else {
-      throw e;
-    }
+    });
+  } catch (e) {
+    console.error("[gallery] Erreur /view :", e.message);
+    if (!res.headersSent) res.status(404).json({ error: "Impossible de charger l'aperçu." });
   }
+});
 
-  await db.prepare("UPDATE sessions_photo SET hd_unlocked_until = ? WHERE id = ?").run(unlockedUntil, session.id);
+// ---------- Téléchargement individuel ----------
+router.get("/:token/photos/:photoId/download", requireGalleryAccess, async (req, res) => {
+  try {
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    if (!hasHdAccess(session)) {
+      return res.status(403).json({ error: "Accès HD expiré ou non débloqué. Utilisez « Récupérer mes photos » pour y accéder à nouveau." });
+    }
 
-  res.json({ ok: true, hd_unlocked_until: unlockedUntil });
+    const photo = await db.prepare("SELECT * FROM session_photos WHERE id = ? AND session_id = ?")
+      .get(req.params.photoId, session.id);
+    if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
+
+    const safeTitre = (photo.titre || (photo.type === "video" ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-");
+    
+    // Extraction sécurisée du format réel
+    let ext = ".jpg";
+    if (isCloudinaryRef(photo.file_path)) {
+      const parsed = parseRef(photo.file_path);
+      ext = parsed.resourceType === "video" ? ".mp4" : ".jpg";
+    } else {
+      ext = photo.type === "video" ? ".mp4" : ".jpg";
+    }
+
+    const filename = `okim-art-${safeTitre}${ext}`;
+
+    if (isCloudinaryRef(photo.file_path)) {
+      const url = await signedPrivateUrl(photo.file_path, filename, { onRepair: repairSessionPhotoRef(photo.id) });
+      return res.redirect(url);
+    }
+
+    const fullPath = path.join(PERSIST_ROOT, photo.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: "Ce fichier local n'est plus disponible." });
+    }
+
+    res.download(fullPath, filename, (err) => {
+      if (err && !res.headersSent) {
+        res.status(404).json({ error: "Ce fichier n'est plus disponible." });
+      }
+    });
+  } catch (e) {
+    console.error("[gallery] Erreur /download :", e.message);
+    if (!res.headersSent) res.status(404).json({ error: "Erreur lors du téléchargement." });
+  }
+});
+
+// ---------- Récupération payante d'une séance (init KKiaPay) ----------
+router.post("/:token/recover", requireGalleryAccess, async (req, res) => {
+  try {
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    if (hasHdAccess(session)) return res.json({ ok: true, already_unlocked: true });
+
+    const enabled = (await getSetting("kkiapay_enabled", "0")) === "1";
+    const publicKey = await getSetting("kkiapay_public_key", "");
+    if (!enabled || !publicKey) {
+      return res.status(400).json({ error: "Le paiement en ligne n'est pas encore activé sur cette plateforme. Contactez OKIM ART directement." });
+    }
+
+    res.json({
+      ok: true,
+      amount: session.recovery_price,
+      kkiapay: { public_key: publicKey, sandbox: (await getSetting("kkiapay_sandbox", "1")) !== "0" },
+      reference: session.access_token
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur lors de l'initialisation de la récupération." });
+  }
+});
+
+// ---------- Confirmation du paiement KKiaPay ----------
+router.post("/:token/kkiapay-confirm", requireGalleryAccess, async (req, res) => {
+  try {
+    const { transactionId } = req.body || {};
+    if (!transactionId) return res.status(400).json({ error: "Identifiant de transaction manquant." });
+
+    const session = await getSessionByToken(req.params.token);
+    if (!session) return res.status(404).json({ error: "Galerie introuvable." });
+    if (hasHdAccess(session)) return res.json({ ok: true, hd_unlocked_until: session.hd_unlocked_until });
+
+    const event = await db.prepare("SELECT * FROM kkiapay_events WHERE transaction_id = ?").get(transactionId);
+    if (!event || !event.success) {
+      return res.status(202).json({ ok: false, pending: true, message: "Vérification du paiement en cours…" });
+    }
+    if (event.amount !== null && Number(event.amount) !== Number(session.recovery_price)) {
+      return res.status(400).json({ error: "Le montant de la transaction ne correspond pas au tarif de récupération." });
+    }
+
+    const hdHours = Number(await getSetting("gallery_hd_access_hours", "48"));
+    const unlockedUntil = addHours(new Date(), hdHours).toISOString();
+
+    try {
+      await db.prepare(`
+        INSERT INTO recovery_transactions (session_id, transaction_reference, amount, status)
+        VALUES (?,?,?, 'success')
+      `).run(session.id, transactionId, event.amount ?? session.recovery_price);
+    } catch (e) {
+      if (e.code === "23505" || (e.message && e.message.includes("UNIQUE constraint failed"))) {
+        const existing = await db.prepare("SELECT session_id FROM recovery_transactions WHERE transaction_reference = ?").get(transactionId);
+        if (!existing || existing.session_id !== session.id) {
+          return res.status(409).json({ error: "Cette transaction a déjà été utilisée pour une autre galerie. Contactez OKIM ART." });
+        }
+        await db.prepare("UPDATE recovery_transactions SET status = 'success' WHERE transaction_reference = ? AND session_id = ?").run(transactionId, session.id);
+      } else {
+        throw e;
+      }
+    }
+
+    await db.prepare("UPDATE sessions_photo SET hd_unlocked_until = ? WHERE id = ?").run(unlockedUntil, session.id);
+
+    res.json({ ok: true, hd_unlocked_until: unlockedUntil });
+  } catch (err) {
+    console.error("Erreur kkiapay-confirm :", err);
+    res.status(500).json({ error: "Erreur serveur lors de la confirmation du paiement." });
+  }
 });
 
 module.exports = router;
