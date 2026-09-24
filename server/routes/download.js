@@ -27,35 +27,29 @@ router.get("/:token", async (req, res) => {
   if (isCloudinaryRef(product.fichier_original)) {
     // MIGRATION CLOUDINARY : le fichier n'est plus sur notre disque. On
     // génère une URL signée valable pour cet aller-retour et on redirige le
-    // navigateur dessus — Cloudinary sert alors le fichier directement,
-   // Détection du fichier d'origine
-const originalFile = product.fichier_original || "";
-let ext = path.extname(originalFile).toLowerCase();
+    // navigateur dessus — Cloudinary sert alors le fichier directement.
+    //
+    // BUG CORRIGÉ : signedPrivateUrl attend (ref, nomDeFichier, options) —
+    // un appel précédent lui passait un OBJET en 2e argument à la place
+    // d'un nom de fichier texte. Le paramètre "filename" de la fonction
+    // recevait donc cet objet entier, qui devenait littéralement la chaîne
+    // "[object Object]" une fois inséré dans l'URL Cloudinary (attachment
+    // flag), cassant le lien de téléchargement généré — exactement ce qui
+    // empêchait un client de récupérer sa photo/vidéo après paiement, alors
+    // même que le bouton "Télécharger" s'affichait normalement (le statut
+    // de commande, lui, était correct).
+    //
+    // Type de fichier déterminé via product.type (colonne fiable, définie à
+    // la création du produit — voir db.js) plutôt qu'en devinant depuis la
+    // référence Cloudinary elle-même, qui ne contient pas d'extension.
+    const isVideo = product.type === "video";
+    const ext = isVideo ? ".mp4" : ".jpg";
+    const finalFilename = `${safeTitre}${ext}`;
 
-// 1. Déterminer si le fichier est une vidéo ou une photo
-const isVideo = originalFile.includes('/video/') ||
-originalFile.endsWith('.mp4') ||
-(product.type && product.type.includes('video'));
-
-// 2. Assigner la bonne extension sans écraser les photos
-if (isVideo) {
-ext = ".mp4";
-} else if (!ext) {
-ext = ".jpg";
-}
-
-// 3. Nom final propre pour l'utilisateur
-const finalFilename = `${safeTitre}${ext}`;
-
-// 4. Génération de l'URL Cloudinary avec le bon nom de fichier et la bonne extension
-const url = await signedPrivateUrl(product.fichier_original, {
-attachment: true,
-filename: finalFilename
-});
-
-return res.redirect(url);
-
-
+    const url = await signedPrivateUrl(product.fichier_original, finalFilename, {
+      onRepair: (repairedRef) => db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
+    });
+    return res.redirect(url);
   }
 
   // Compatibilité ascendante : ancien chemin local (donnée antérieure à la
