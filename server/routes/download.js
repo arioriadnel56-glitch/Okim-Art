@@ -46,9 +46,19 @@ router.get("/:token", async (req, res) => {
     const ext = isVideo ? ".mp4" : ".jpg";
     const finalFilename = `${safeTitre}${ext}`;
 
-    const url = await signedPrivateUrl(product.fichier_original, finalFilename, {
-      onRepair: (repairedRef) => db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
-    });
+    // Le jeton a déjà été consommé plus haut (usage unique) — si
+    // signedPrivateUrl échoue ici (référence introuvable sur Cloudinary),
+    // on renvoie un message clair au client plutôt que de laisser Express
+    // retomber sur le message générique "Erreur interne du serveur", qui
+    // masquerait complètement la vraie cause.
+    let url;
+    try {
+      url = await signedPrivateUrl(product.fichier_original, finalFilename, {
+        onRepair: (repairedRef) => db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
+      });
+    } catch (e) {
+      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
+    }
     return res.redirect(url);
   }
 
