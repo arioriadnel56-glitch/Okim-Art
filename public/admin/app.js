@@ -1,6 +1,6 @@
 /**
  * OKIM ART - Admin Panel Client Engine
- * Vanilla JS Application
+ * Vanilla JS Application (Version ultra-sécurisée)
  */
 
 (function () {
@@ -68,21 +68,29 @@
     return cleaned;
   }
 
-  // API Call Wrapper (GET / DELETE)
+  // API Call Wrapper (GET / DELETE) avec sécurisation JSON
   async function api(endpoint, options = {}) {
     try {
       const res = await fetch(`/api/admin${endpoint}`, {
         headers: { "Accept": "application/json" },
         ...options
       });
+
       if (res.status === 401) {
         window.location.href = "login.html";
         return null;
       }
+
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        console.warn(`[API WARNING] Réponse non-JSON pour ${endpoint}:`, res.status);
+        return null;
+      }
+
       return await res.json();
     } catch (err) {
       console.error(`API Error [${endpoint}]:`, err);
-      throw err;
+      return null;
     }
   }
 
@@ -97,18 +105,25 @@
         },
         body: JSON.stringify(data)
       });
+
       if (res.status === 401) {
         window.location.href = "login.html";
         return null;
       }
+
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        return { success: res.ok };
+      }
+
       return await res.json();
     } catch (err) {
       console.error(`API JSON Error [${endpoint}]:`, err);
-      throw err;
+      return null;
     }
   }
 
-  // API Call Wrapper avec progression (XMLHttpRequest pour FormData)
+  // API Call Wrapper avec suivi de progression XHR
   function apiFormWithProgress(endpoint, formData, onProgress, method = "POST") {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -131,7 +146,7 @@
             const data = JSON.parse(xhr.responseText);
             resolve(data);
           } catch (e) {
-            resolve(xhr.responseText);
+            resolve({ success: true, text: xhr.responseText });
           }
         } else {
           reject(new Error(`Erreur HTTP ${xhr.status}`));
@@ -144,12 +159,7 @@
     });
   }
 
-  // API Call Wrapper standard pour FormData sans suivi explicite
-  async function apiForm(endpoint, formData, method = "POST") {
-    return apiFormWithProgress(endpoint, formData, null, method);
-  }
-
-  // Composant Réutilisable : Wire Dropzone (Drag & Drop + Preview)
+  // Composant Réutilisable : Wire Dropzone
   function wireDropzone(zoneEl, inputEl, previewEl, options = {}) {
     if (!zoneEl || !inputEl) return;
 
@@ -211,16 +221,21 @@
     const data = await api("/dashboard");
     if (!data) return;
 
-    document.getElementById("stat-photos").textContent = data.photosCount || 0;
-    document.getElementById("stat-orders").textContent = data.ordersCount || 0;
-    document.getElementById("stat-revenue").textContent = money(data.totalRevenue);
-    document.getElementById("stat-enrollments").textContent = data.enrollmentsCount || 0;
-    document.getElementById("stat-licenses").textContent = data.licensesCount || 0;
-    document.getElementById("stat-downloads").textContent = data.downloadsCount || 0;
+    const setTxt = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+
+    setTxt("stat-photos", data.photosCount || 0);
+    setTxt("stat-orders", data.ordersCount || 0);
+    setTxt("stat-revenue", money(data.totalRevenue));
+    setTxt("stat-enrollments", data.enrollmentsCount || 0);
+    setTxt("stat-licenses", data.licensesCount || 0);
+    setTxt("stat-downloads", data.downloadsCount || 0);
   }
 
   async function resetDashboardCounters() {
-    if (!confirm("Voulez-vous réinitialiser l'affichage des compteurs du dashboard ? (Aucune donnée ne sera supprimée)")) return;
+    if (!confirm("Voulez-vous réinitialiser l'affichage des compteurs du dashboard ?")) return;
     const res = await apiJson("/dashboard/reset", {}, "POST");
     if (res && res.success) {
       loadDashboard();
@@ -310,10 +325,11 @@
   async function handlePortfolioSubmit(e) {
     e.preventDefault();
     const form = e.target;
-    const isVideoMode = document.getElementById("media-type-video").checked;
+    const videoRadio = document.getElementById("media-type-video");
+    const isVideoMode = videoRadio ? videoRadio.checked : false;
     const fileInput = form.querySelector('input[type="file"]');
     
-    if (!fileInput.files.length) {
+    if (!fileInput || !fileInput.files.length) {
       alert("Veuillez sélectionner un fichier.");
       return;
     }
@@ -324,8 +340,8 @@
         const videoUrl = await uploadShortVideoToCloudinary(videoFile);
         
         await apiJson("/portfolio", {
-          title: form.title.value,
-          category_id: form.category_id.value,
+          title: form.title ? form.title.value : "",
+          category_id: form.category_id ? form.category_id.value : "",
           video_url: videoUrl,
           is_video: true
         });
@@ -348,7 +364,7 @@
   async function loadPortfolio() {
     const items = await api("/portfolio");
     const container = document.getElementById("portfolio-grid");
-    if (!container || !items) return;
+    if (!container || !Array.isArray(items)) return;
 
     container.innerHTML = items.map(item => `
       <div class="portfolio-card">
@@ -373,11 +389,13 @@
   }
 
   // ==========================================
-  // 4. CATEGORIES, SERVICES, FORMATIONS, PRODUITS
+  // 4. CATEGORIES, SERVICES & FORMATIONS
   // ==========================================
 
   async function loadCategories() {
     categoriesCache = await api("/categories") || [];
+    if (!Array.isArray(categoriesCache)) return;
+
     const selects = document.querySelectorAll(".category-select");
     selects.forEach(select => {
       select.innerHTML = categoriesCache.map(c => 
@@ -389,7 +407,7 @@
   async function loadFormations() {
     const list = await api("/formations");
     const container = document.getElementById("formations-list");
-    if (!container || !list) return;
+    if (!container || !Array.isArray(list)) return;
 
     container.innerHTML = list.map(f => `
       <div class="formation-item">
@@ -411,13 +429,13 @@
   }
 
   // ==========================================
-  // 5. COMMANDES, MESSAGES & TÉMOIGNAGES
+  // 5. COMMANDES
   // ==========================================
 
   async function loadOrders() {
     const orders = await api("/orders");
     const tableBody = document.querySelector("#orders-table tbody");
-    if (!tableBody || !orders) return;
+    if (!tableBody || !Array.isArray(orders)) return;
 
     tableBody.innerHTML = orders.map(o => `
       <tr>
@@ -457,32 +475,30 @@
   // 6. PARAMÈTRES & RBAC
   // ==========================================
 
-  async function applyRBAC(currentUser) {
-    if (currentUser.role === "secretary") {
+  function applyRBAC(currentUser) {
+    if (currentUser && currentUser.role === "secretary") {
       document.querySelectorAll(".admin-only").forEach(el => el.style.display = "none");
     }
   }
 
   async function loadSettings() {
     const settings = await api("/settings");
-    if (!settings) return;
-
     const form = document.getElementById("settings-form");
-    if (!form) return;
+    if (!form || !settings) return;
 
-    form.bio.value = settings.bio || "";
-    form.phone.value = settings.phone || "";
-    form.retention_days.value = settings.retention_days || 30;
+    if (form.bio) form.bio.value = settings.bio || "";
+    if (form.phone) form.phone.value = settings.phone || "";
+    if (form.retention_days) form.retention_days.value = settings.retention_days || 30;
   }
 
   // ==========================================
-  // 7. CORBEILLE (SOFT DELETE)
+  // 7. CORBEILLE
   // ==========================================
 
   async function loadTrash() {
     const items = await api("/trash");
     const container = document.getElementById("trash-list");
-    if (!container || !items) return;
+    if (!container || !Array.isArray(items)) return;
 
     container.innerHTML = items.map(item => `
       <div class="trash-item">
@@ -535,7 +551,6 @@
 
       activeSessionUpload = { sessionId, sentCount: i };
 
-      // Envoi avec calcul en temps réel de la progression du lot courant + globale
       await apiFormWithProgress(`/sessions/${sessionId}/photos`, formData, (batchLoaded, batchTotal) => {
         if (onProgress) {
           const currentBatchProgress = batchLoaded / batchTotal;
@@ -558,7 +573,7 @@
   async function loadSessions() {
     const sessions = await api("/sessions");
     const container = document.getElementById("sessions-list");
-    if (!container || !sessions) return;
+    if (!container || !Array.isArray(sessions)) return;
 
     container.innerHTML = sessions.map(s => {
       const phone = normalizePhoneForWhatsapp(s.client_phone);
@@ -591,7 +606,6 @@
       `;
     }).join("");
 
-    // Attacher la gestion des événements pour chaque carte de séance
     container.querySelectorAll(".session-card").forEach(card => {
       const sessionId = card.dataset.id;
       const fileInput = card.querySelector(".session-files-input");
@@ -601,9 +615,11 @@
       const progressBar = card.querySelector(".session-progress-bar");
       const progressStatus = card.querySelector(".progress-status");
 
+      if (!fileInput || !uploadBtn) return;
+
       fileInput.addEventListener("change", () => {
         const count = fileInput.files.length;
-        countLabel.textContent = `${count} photo(s) sélectionnée(s)`;
+        if (countLabel) countLabel.textContent = `${count} photo(s) sélectionnée(s)`;
         uploadBtn.disabled = count === 0;
       });
 
@@ -611,24 +627,25 @@
         if (!fileInput.files.length) return;
 
         uploadBtn.disabled = true;
-        progressWrapper.style.display = "block";
+        if (progressWrapper) progressWrapper.style.display = "block";
 
         try {
           await uploadSessionFiles(sessionId, fileInput.files, (percent, current, total) => {
             const rounded = Math.round(percent);
-            progressBar.style.width = `${rounded}%`;
-            progressStatus.textContent = `Envoi en cours: ${rounded}% (${current}/${total} photos)`;
+            if (progressBar) progressBar.style.width = `${rounded}%`;
+            if (progressStatus) progressStatus.textContent = `Envoi en cours: ${rounded}% (${current}/${total} photos)`;
           });
 
-          progressStatus.textContent = "Téléchargement terminé avec succès !";
+          if (progressStatus) progressStatus.textContent = "Téléchargement terminé avec succès !";
           fileInput.value = "";
-          countLabel.textContent = "0 photo(s) sélectionnée(s)";
+          if (countLabel) countLabel.textContent = "0 photo(s) sélectionnée(s)";
+          
           setTimeout(() => {
-            progressWrapper.style.display = "none";
-            progressBar.style.width = "0%";
+            if (progressWrapper) progressWrapper.style.display = "none";
+            if (progressBar) progressBar.style.width = "0%";
           }, 3000);
         } catch (err) {
-          progressStatus.textContent = `Erreur: ${err.message}`;
+          if (progressStatus) progressStatus.textContent = `Erreur: ${err.message}`;
           uploadBtn.disabled = false;
         }
       });
@@ -642,7 +659,7 @@
   async function loadSoftware() {
     const items = await api("/software");
     const container = document.getElementById("software-list");
-    if (!container || !items) return;
+    if (!container || !Array.isArray(items)) return;
 
     container.innerHTML = items.map(sw => `
       <div class="software-card">
@@ -653,16 +670,16 @@
   }
 
   // ==========================================
-  // 10. BOOTSTRAP & INITIALIZATION
+  // 10. BOOTSTRAP
   // ==========================================
 
   async function boot() {
     const user = await api("/auth/admin/me");
-    if (!user) return; // Redirection gérée par api()
+    if (!user) return; // Redirection gérée si non authentifié
 
     applyRBAC(user);
 
-    // Initialisation des modules
+    // Chargement défensif des modules
     loadDashboard();
     loadNotifications();
     loadCategories();
@@ -674,14 +691,14 @@
     loadSessions();
     loadSoftware();
 
-    // Attacher les écouteurs d'événements globaux
+    // Attacher événements globaux avec vérification
     const btnResetDash = document.getElementById("btn-reset-dashboard");
     if (btnResetDash) btnResetDash.addEventListener("click", resetDashboardCounters);
 
     const portfolioForm = document.getElementById("portfolio-form");
     if (portfolioForm) portfolioForm.addEventListener("submit", handlePortfolioSubmit);
 
-    // Dropzone Portfolio
+    // Dropzone
     wireDropzone(
       document.getElementById("portfolio-dropzone"),
       document.getElementById("portfolio-file-input"),
