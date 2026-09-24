@@ -6,9 +6,8 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { db } = require("../../db");
 const {
-  uploadMedia, saveOriginal, savePublicVersion, saveVideoPrivate, 
-  registerPrivateVideoRef, registerPrivatePhotoRef, isVideoFile, 
-  assertMediaSize, deletePublicFile, deletePrivateFile
+  uploadMedia, saveOriginal, savePublicVersion, saveVideoPrivate, registerPrivateVideoRef,
+  isVideoFile, assertMediaSize, deletePublicFile, deletePrivateFile
 } = require("../../utils/upload");
 const { getSetting, addDays, hasHdAccess } = require("../../utils/gallery");
 
@@ -45,8 +44,10 @@ function buildWatermarkLabel(clientName, accessToken) {
   return `OKIM ART • ${shortName}${shortToken ? " • " + shortToken : ""}`;
 }
 
-// ---------- Fallback : Traitement des fichiers par lots via serveur Node ----------
+// ---------- Traitement des fichiers par lots ----------
 async function insertSessionFiles(sessionId, files, watermarkLabel) {
+  // Réduction de la concurrence à 2 pour éviter la saturation mémoire (RAM) 
+  // lors du traitement de fichiers volumineux.
   const CONCURRENCY = 2;
   let nextIndex = 0;
 
@@ -56,6 +57,7 @@ async function insertSessionFiles(sessionId, files, watermarkLabel) {
       if (i >= files.length) return;
       const file = files[i];
 
+      // Vérification de la taille (définie dans utils/upload.js)
       assertMediaSize(file);
 
       const cleanTitre = (file.originalname || "").replace(/\.[a-zA-Z0-9]+$/, "");
@@ -118,7 +120,7 @@ router.post("/", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, re
   }
 });
 
-// ---------- Ajouter un lot de photos/vidéos (Upload classique Express) ----------
+// ---------- Ajouter un lot de photos/vidéos ----------
 router.post("/:id/photos", uploadMedia.array("files", MAX_FILES_PER_BATCH), async (req, res) => {
   try {
     const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
@@ -129,56 +131,6 @@ router.post("/:id/photos", uploadMedia.array("files", MAX_FILES_PER_BATCH), asyn
 
     const updated = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(s.id);
     res.status(201).json({ ok: true, session: await sessionSummary(req, updated) });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-// ---------- NOUVEAU : Enregistrer une photo envoyée DIRECTEMENT à Cloudinary ----------
-router.post("/:id/photos-direct", async (req, res) => {
-  try {
-    const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
-    if (!s) return res.status(404).json({ error: "Séance introuvable." });
-
-    const { titre, public_id, version, watermark_url } = req.body || {};
-    if (!public_id) {
-      return res.status(400).json({ error: "Référence Cloudinary (public_id) manquante." });
-    }
-
-    // Référence privée formatée pour le stockage sécurisé
-    const filePath = typeof registerPrivatePhotoRef === "function" 
-      ? registerPrivatePhotoRef(public_id, version)
-      : public_id;
-
-    const cleanTitre = (titre || "Photo").toString().slice(0, 200);
-    const watermarkPath = watermark_url || null;
-
-    await db.prepare(`
-      INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) 
-      VALUES (?, ?, ?, ?, 'photo')
-    `).run(s.id, cleanTitre, filePath, watermarkPath);
-
-    res.status(201).json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-// ---------- Enregistrer une vidéo envoyée DIRECTEMENT à Cloudinary ----------
-router.post("/:id/videos", async (req, res) => {
-  try {
-    const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
-    if (!s) return res.status(404).json({ error: "Séance introuvable." });
-
-    const { titre, public_id, version } = req.body || {};
-    if (!public_id) return res.status(400).json({ error: "Référence Cloudinary manquante — l'upload direct a-t-il bien abouti ?" });
-
-    const filePath = registerPrivateVideoRef(public_id, version);
-    const cleanTitre = (titre || "Vidéo").toString().slice(0, 200);
-    await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,NULL,'video')")
-      .run(s.id, cleanTitre, filePath);
-
-    res.status(201).json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -196,6 +148,26 @@ router.get("/:id", async (req, res) => {
   if (!s) return res.status(404).json({ error: "Séance introuvable." });
   const photos = await db.prepare("SELECT id, titre, watermark_path, type, created_at FROM session_photos WHERE session_id = ?").all(s.id);
   res.json({ session: await sessionSummary(req, s), photos });
+});
+
+// ---------- Vidéo uploadée directement vers Cloudinary ----------
+router.post("/:id/videos", async (req, res) => {
+  try {
+    const s = await db.prepare("SELECT * FROM sessions_photo WHERE id = ?").get(req.params.id);
+    if (!s) return res.status(404).json({ error: "Séance introuvable." });
+
+    const { titre, public_id, version } = req.body || {};
+    if (!public_id) return res.status(400).json({ error: "Référence Cloudinary manquante — l'upload direct a-t-il bien abouti ?" });
+
+    const filePath = registerPrivateVideoRef(public_id, version);
+    const cleanTitre = (titre || "Vidéo").toString().slice(0, 200);
+    await db.prepare("INSERT INTO session_photos (session_id, titre, file_path, watermark_path, type) VALUES (?,?,?,NULL,'video')")
+      .run(s.id, cleanTitre, filePath);
+
+    res.status(201).json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ---------- Modifier une séance ----------
