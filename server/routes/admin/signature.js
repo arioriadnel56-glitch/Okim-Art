@@ -87,4 +87,49 @@ router.get("/session-video", async (req, res) => {
   }
 });
 
+module.exports = const express = require("express");
+const cloudinary = require("cloudinary").v2;
+const router = express.Router();
+
+// Route pour obtenir une signature d'upload direct pour une PHOTO
+router.get("/session-photo", (req, res) => {
+  try {
+    const timestamp = Math.round(new Date().getTime() / 1000);
+    const { client_name, access_token } = req.query;
+
+    // Construction du texte du filigrane
+    const shortName = (client_name || "Client").trim().slice(0, 22);
+    const shortToken = (access_token || "").replace(/-/g, "").slice(0, 6).toUpperCase();
+    const watermarkText = `OKIM ART • ${shortName}${shortToken ? " • " + shortToken : ""}`;
+
+    // Paramètres de transformation transmis à Cloudinary pour la version publique/filigranée
+    // Note : On génère la version filigranée à la volée ou lors de l'upload via un preset
+    const paramsToSign = {
+      timestamp: timestamp,
+      folder: "okim_art/originals" // Dossier privé Cloudinary
+    };
+
+    const signature = cloudinary.utils.api_sign_request(
+      paramsToSign,
+      process.env.CLOUDINARY_API_SECRET
+    );
+
+    res.json({
+      signature,
+      timestamp,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      folder: "okim_art/originals",
+      watermarkText
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
+
+
+
+
+
