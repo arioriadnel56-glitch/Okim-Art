@@ -3,6 +3,7 @@
 // ============================================================
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 const { db } = require("../db");
 const { getValidToken, consumeToken } = require("../utils/tokens");
 const { PERSIST_ROOT } = require("../utils/upload");
@@ -11,67 +12,86 @@ const { isCloudinaryRef, signedPrivateUrl } = require("../utils/cloudinaryStorag
 const router = express.Router();
 
 router.get("/:token", async (req, res) => {
-  const row = await getValidToken(req.params.token);
-  if (!row) return res.status(410).json({ error: "Lien de téléchargement invalide, expiré ou déjà entièrement utilisé." });
+  try {
+    // 1. Vérification de la validité du jeton
+    const row = await getValidToken(req.params.token);
+    if (!row) {
+      return res.status(410).json({ error: "Lien de téléchargement invalide, expiré ou déjà utilisé." });
+    }
 
-  const product = await db.prepare("SELECT * FROM products WHERE id = ?").get(row.product_id);
-  if (!product) return res.status(404).json({ error: "Fichier introuvable." });
+    // 2. Récupération du produit en BDD
+    const product = await db.prepare("SELECT * FROM products WHERE id = ?").get(row.product_id);
+    if (!product || !product.fichier_original) {
+      return res.status(404).json({ error: "Fichier associé introuvable." });
+    }
 
-  // Le jeton est consommé AVANT la livraison, comme avant la migration :
-  // un jeton à usage unique déjà validé ne doit pas pouvoir être rejoué même
-  // si la livraison Cloudinary qui suit échoue pour une autre raison.
-  await consumeToken(req.params.token);
-
-  const safeTitre = product.titre.replace(/[^a-z0-9]+/gi, "-");
-
-  if (isCloudinaryRef(product.fichier_original)) {
-    // MIGRATION CLOUDINARY : le fichier n'est plus sur notre disque. On
-    // génère une URL signée valable pour cet aller-retour et on redirige le
-    // navigateur dessus — Cloudinary sert alors le fichier directement.
-    //
-    // BUG CORRIGÉ : signedPrivateUrl attend (ref, nomDeFichier, options) —
-    // un appel précédent lui passait un OBJET en 2e argument à la place
-    // d'un nom de fichier texte. Le paramètre "filename" de la fonction
-    // recevait donc cet objet entier, qui devenait littéralement la chaîne
-    // "[object Object]" une fois inséré dans l'URL Cloudinary (attachment
-    // flag), cassant le lien de téléchargement généré — exactement ce qui
-    // empêchait un client de récupérer sa photo/vidéo après paiement, alors
-    // même que le bouton "Télécharger" s'affichait normalement (le statut
-    // de commande, lui, était correct).
-    //
-    // Type de fichier déterminé via product.type (colonne fiable, définie à
-    // la création du produit — voir db.js) plutôt qu'en devinant depuis la
-    // référence Cloudinary elle-même, qui ne contient pas d'extension.
+    // Nettoyage et sécurisation du nom de fichier
+    const safeTitre = (product.titre || "photo-okim-art").replace(/[^a-z0-9]+/gi, "-");
     const isVideo = product.type === "video";
     const ext = isVideo ? ".mp4" : ".jpg";
     const finalFilename = `${safeTitre}${ext}`;
 
-    // Le jeton a déjà été consommé plus haut (usage unique) — si
-    // signedPrivateUrl échoue ici (référence introuvable sur Cloudinary),
-    // on renvoie un message clair au client plutôt que de laisser Express
-    // retomber sur le message générique "Erreur interne du serveur", qui
-    // masquerait complètement la vraie cause.
-    let url;
-    try {
-      url = await signedPrivateUrl(product.fichier_original, finalFilename, {
-        onRepair: (repairedRef) => db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
-      });
-    } catch (e) {
-      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
-    }
-    return res.redirect(url);
-  }
+    // ------------------------------------------------------------
+    // CAS A : Fichier hébergé sur Cloudinary
+    // ------------------------------------------------------------
+    if (isCloudinaryRef(product.fichier_original)) {
+      let url;
+      try {
+        // Génération de l'URL signée avec le nom de fichier explicite
+        url = await signedPrivateUrl(product.fichier_original, finalFilename, {
+          flags: "attachment", // Force le téléchargement (Content-Disposition: attachment)
+          onRepair: (repairedRef) =>
+            db.prepare("UPDATE products SET fichier_original = ? WHERE id = ?").run(repairedRef, product.id)
+        });
+      } catch (e) {
+        console.error("Erreur génération URL Cloudinary:", e);
+        return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible sur Cloudinary." });
+      }
 
-  // Compatibilité ascendante : ancien chemin local (donnée antérieure à la
-  // migration). Sur Render, ce fichier n'existe probablement plus après un
-  // redéploiement — géré proprement plutôt que de planter sur un ENOENT.
-  const fullPath = path.join(PERSIST_ROOT, product.fichier_original);
-  const ext = path.extname(fullPath) || ".jpg";
-  res.download(fullPath, `okim-art-${safeTitre}${ext}`, (err) => {
-    if (err && !res.headersSent) {
-      res.status(404).json({ error: "Ce fichier n'est plus disponible. Contactez le support." });
+      // Le jeton est consommé uniquement si la signature a réussi
+      await consumeToken(req.params.token);
+
+      // Redirection HTTP vers l'URL Cloudinary avec flag attachment
+      return res.redirect(url);
     }
-  });
+
+    // ------------------------------------------------------------
+    // CAS B : Compatibilité ascendante (Fichier local)
+    // ------------------------------------------------------------
+    const fullPath = path.join(PERSIST_ROOT, product.fichier_original);
+
+    // Vérification existence et taille sur le disque local
+    if (!fs.existsSync(fullPath)) {
+      console.error(`Fichier local introuvable : ${fullPath}`);
+      return res.status(404).json({ error: "Le fichier n'existe plus sur le serveur." });
+    }
+
+    const stat = fs.statSync(fullPath);
+    if (stat.size === 0) {
+      return res.status(500).json({ error: "Le fichier image est vide sur le serveur." });
+    }
+
+    // Le jeton est consommé avant le transfert local
+    await consumeToken(req.params.token);
+
+    // Configuration des en-têtes stricts pour forcer l'affichage/téléchargement correct
+    const contentType = isVideo ? "video/mp4" : "image/jpeg";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", stat.size);
+
+    return res.download(fullPath, `okim-art-${finalFilename}`, (err) => {
+      if (err && !res.headersSent) {
+        console.error("Erreur res.download :", err);
+        res.status(500).json({ error: "Erreur lors du transfert du fichier." });
+      }
+    });
+
+  } catch (err) {
+    console.error("Erreur serveur dans /download/:token :", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Erreur interne lors du téléchargement." });
+    }
+  }
 });
 
 module.exports = router;
