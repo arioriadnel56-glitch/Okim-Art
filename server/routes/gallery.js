@@ -125,7 +125,7 @@ router.get("/:token/photos/:photoId/blob", requireGalleryAccess, async (req, res
       res.sendFile(fullPath);
     }
   } catch (e) {
-    res.status(404).json({ error: "Ce fichier n'est plus disponible. Contactez le support." });
+    res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
   }
 });
 
@@ -147,8 +147,12 @@ router.get("/:token/photos/:photoId/view", requireGalleryAccess, async (req, res
   if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
 
   if (isCloudinaryRef(photo.file_path)) {
-    const url = await signedPrivateUrl(photo.file_path, null, { inline: true, onRepair: repairSessionPhotoRef(photo.id) });
-    return res.redirect(url);
+    try {
+      const url = await signedPrivateUrl(photo.file_path, null, { inline: true, onRepair: repairSessionPhotoRef(photo.id) });
+      return res.redirect(url);
+    } catch (e) {
+      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
+    }
   }
 
   // Compatibilité ascendante : ancien chemin local — affichage direct du fichier.
@@ -191,8 +195,12 @@ router.get("/:token/photos/:photoId/download", requireGalleryAccess, async (req,
     : (photo.type === "video" ? ".mp4" : ".jpg");
 
   if (isCloudinaryRef(photo.file_path)) {
-    const url = await signedPrivateUrl(photo.file_path, `okim-art-${safeTitre}${ext}`, { onRepair: repairSessionPhotoRef(photo.id) });
-    return res.redirect(url);
+    try {
+      const url = await signedPrivateUrl(photo.file_path, `okim-art-${safeTitre}${ext}`, { onRepair: repairSessionPhotoRef(photo.id) });
+      return res.redirect(url);
+    } catch (e) {
+      return res.status(404).json({ error: e.message || "Ce fichier n'est plus disponible. Contactez le support." });
+    }
   }
 
   // Compatibilité ascendante : ancien chemin local (donnée antérieure à la migration Cloudinary).
