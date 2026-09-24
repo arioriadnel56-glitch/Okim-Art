@@ -108,22 +108,45 @@
     }
   }
 
-  // API Call Wrapper (FormData Payload)
-  async function apiForm(endpoint, formData, method = "POST") {
-    try {
-      const res = await fetch(`/api/admin${endpoint}`, {
-        method: method,
-        body: formData
-      });
-      if (res.status === 401) {
-        window.location.href = "login.html";
-        return null;
+  // API Call Wrapper avec progression (XMLHttpRequest pour FormData)
+  function apiFormWithProgress(endpoint, formData, onProgress, method = "POST") {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            onProgress(e.loaded, e.total);
+          }
+        });
       }
-      return await res.json();
-    } catch (err) {
-      console.error(`API Form Error [${endpoint}]:`, err);
-      throw err;
-    }
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status === 401) {
+          window.location.href = "login.html";
+          return reject(new Error("Non autorisé (401)"));
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data);
+          } catch (e) {
+            resolve(xhr.responseText);
+          }
+        } else {
+          reject(new Error(`Erreur HTTP ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener("error", () => reject(new Error("Erreur réseau")));
+      xhr.open(method, `/api/admin${endpoint}`);
+      xhr.send(formData);
+    });
+  }
+
+  // API Call Wrapper standard pour FormData sans suivi explicite
+  async function apiForm(endpoint, formData, method = "POST") {
+    return apiFormWithProgress(endpoint, formData, null, method);
   }
 
   // Composant Réutilisable : Wire Dropzone (Drag & Drop + Preview)
@@ -308,7 +331,10 @@
         });
       } else {
         const formData = new FormData(form);
-        await apiForm("/portfolio", formData);
+        await apiFormWithProgress("/portfolio", formData, (loaded, total) => {
+          const percent = (loaded / total) * 100;
+          setPhotoUploadProgress(percent);
+        });
       }
       
       form.reset();
@@ -484,25 +510,22 @@
   }
 
   // ==========================================
-  // 8. SEANCES PHOTO CLIENTS (/sessions)
+  // 8. SÉANCES PHOTO CLIENTS (/sessions)
   // ==========================================
 
   async function uploadSessionFiles(sessionId, files, onProgress) {
     const fileArray = Array.from(files);
     let sentCount = activeSessionUpload ? activeSessionUpload.sentCount : 0;
+    const totalFiles = fileArray.length;
 
-    for (let i = sentCount; i < fileArray.length; i += SESSION_BATCH_SIZE) {
+    for (let i = sentCount; i < totalFiles; i += SESSION_BATCH_SIZE) {
       const batch = fileArray.slice(i, i + SESSION_BATCH_SIZE);
       const formData = new FormData();
 
       let batchBytes = 0;
       batch.forEach(f => {
         batchBytes += f.size;
-        if (f.type.startsWith("video/")) {
-          // Gestion vidéo spécifique via signature
-        } else {
-          formData.append("photos", f);
-        }
+        formData.append("photos", f);
       });
 
       if (batchBytes > SESSION_BATCH_MAX_BYTES) {
@@ -512,11 +535,21 @@
 
       activeSessionUpload = { sessionId, sentCount: i };
 
-      await apiForm(`/sessions/${sessionId}/photos`, formData);
+      // Envoi avec calcul en temps réel de la progression du lot courant + globale
+      await apiFormWithProgress(`/sessions/${sessionId}/photos`, formData, (batchLoaded, batchTotal) => {
+        if (onProgress) {
+          const currentBatchProgress = batchLoaded / batchTotal;
+          const globalProgress = ((i + currentBatchProgress * batch.length) / totalFiles) * 100;
+          onProgress(globalProgress, i + Math.floor(currentBatchProgress * batch.length), totalFiles);
+        }
+      });
+
       sentCount += batch.length;
       activeSessionUpload.sentCount = sentCount;
 
-      if (onProgress) onProgress((sentCount / fileArray.length) * 100);
+      if (onProgress) {
+        onProgress((sentCount / totalFiles) * 100, sentCount, totalFiles);
+      }
     }
 
     activeSessionUpload = null;
@@ -533,13 +566,73 @@
       const waUrl = `https://wa.me/${phone}?text=${waMessage}`;
 
       return `
-        <div class="session-card">
+        <div class="session-card" data-id="${s.id}">
           <h4>${esc(s.client_name)} (${esc(s.title)})</h4>
           <p>PIN: <strong>${esc(s.pin_code)}</strong></p>
+          
+          <div class="session-upload-box">
+            <input type="file" multiple class="session-files-input" id="files-session-${s.id}" style="display:none;">
+            <button class="btn-select-files" onclick="document.getElementById('files-session-${s.id}').click()">Sélectionner des photos</button>
+            <span class="files-count-label">0 photo(s) sélectionnée(s)</span>
+            
+            <div class="progress-wrapper" style="display:none; margin-top:8px;">
+              <div class="progress-bar-bg" style="background:#e0e0e0; height:10px; border-radius:5px; overflow:hidden;">
+                <div class="session-progress-bar" style="background:#4caf50; height:100%; width:0%;"></div>
+              </div>
+              <small class="progress-status" style="display:block; margin-top:4px;">0%</small>
+            </div>
+            
+            <button class="btn-upload-session" data-id="${s.id}" style="margin-top:8px;" disabled>Envoyer les photos</button>
+          </div>
+
+          <br>
           <a href="${waUrl}" target="_blank" class="btn-whatsapp">Partager sur WhatsApp</a>
         </div>
       `;
     }).join("");
+
+    // Attacher la gestion des événements pour chaque carte de séance
+    container.querySelectorAll(".session-card").forEach(card => {
+      const sessionId = card.dataset.id;
+      const fileInput = card.querySelector(".session-files-input");
+      const countLabel = card.querySelector(".files-count-label");
+      const uploadBtn = card.querySelector(".btn-upload-session");
+      const progressWrapper = card.querySelector(".progress-wrapper");
+      const progressBar = card.querySelector(".session-progress-bar");
+      const progressStatus = card.querySelector(".progress-status");
+
+      fileInput.addEventListener("change", () => {
+        const count = fileInput.files.length;
+        countLabel.textContent = `${count} photo(s) sélectionnée(s)`;
+        uploadBtn.disabled = count === 0;
+      });
+
+      uploadBtn.addEventListener("click", async () => {
+        if (!fileInput.files.length) return;
+
+        uploadBtn.disabled = true;
+        progressWrapper.style.display = "block";
+
+        try {
+          await uploadSessionFiles(sessionId, fileInput.files, (percent, current, total) => {
+            const rounded = Math.round(percent);
+            progressBar.style.width = `${rounded}%`;
+            progressStatus.textContent = `Envoi en cours: ${rounded}% (${current}/${total} photos)`;
+          });
+
+          progressStatus.textContent = "Téléchargement terminé avec succès !";
+          fileInput.value = "";
+          countLabel.textContent = "0 photo(s) sélectionnée(s)";
+          setTimeout(() => {
+            progressWrapper.style.display = "none";
+            progressBar.style.width = "0%";
+          }, 3000);
+        } catch (err) {
+          progressStatus.textContent = `Erreur: ${err.message}`;
+          uploadBtn.disabled = false;
+        }
+      });
+    });
   }
 
   // ==========================================
