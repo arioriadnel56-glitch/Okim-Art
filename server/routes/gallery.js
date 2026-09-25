@@ -99,7 +99,7 @@ router.get("/:token/download", requireGalleryAccess, async (req, res) => {
   }
 });
 
-// ---------- Proxy streaming pour bouton "Enregistrer" (CORS-safe) ----------
+// ---------- Proxy streaming pour bouton "Enregistrer" / Galerie (CORS-safe) ----------
 router.get("/:token/photos/:photoId/blob", requireGalleryAccess, async (req, res) => {
   try {
     const session = await getSessionByToken(req.params.token);
@@ -115,7 +115,6 @@ router.get("/:token/photos/:photoId/blob", requireGalleryAccess, async (req, res
     if (isCloudinaryRef(photo.file_path)) {
       const stream = await openPrivateStream(photo.file_path, { onRepair: repairSessionPhotoRef(photo.id) });
 
-      // Transposer les en-têtes clés pour le support streaming mobile / iOS Range requests
       if (stream.statusCode) res.status(stream.statusCode);
 
       const headersToRelay = ["content-type", "content-length", "accept-ranges", "content-range"];
@@ -127,14 +126,12 @@ router.get("/:token/photos/:photoId/blob", requireGalleryAccess, async (req, res
         res.setHeader("Content-Type", photo.type === "video" ? "video/mp4" : "image/jpeg");
       }
 
-      // Destruction du flux amont en cas de fermeture anticipée de la connexion client
       req.on("close", () => {
         if (stream && typeof stream.destroy === "function") stream.destroy();
       });
 
       return stream.pipe(res);
     } else {
-      // Stockage local fallback
       const fullPath = path.join(PERSIST_ROOT, photo.file_path);
       if (!fs.existsSync(fullPath)) {
         return res.status(404).json({ error: "Le fichier local n'existe plus sur le serveur." });
@@ -183,7 +180,7 @@ router.get("/:token/photos/:photoId/view", requireGalleryAccess, async (req, res
   }
 });
 
-// ---------- Téléchargement individuel ----------
+// ---------- Téléchargement individuel sécurisé par Proxy Streaming (RÈGLE LE BUG DOSSIER SUR SAFARI) ----------
 router.get("/:token/photos/:photoId/download", requireGalleryAccess, async (req, res) => {
   try {
     const session = await getSessionByToken(req.params.token);
@@ -197,33 +194,40 @@ router.get("/:token/photos/:photoId/download", requireGalleryAccess, async (req,
     if (!photo) return res.status(404).json({ error: "Fichier introuvable dans cette séance." });
 
     const safeTitre = (photo.titre || (photo.type === "video" ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-");
-    
-    // Extraction sécurisée du format réel
-    let ext = ".jpg";
-    if (isCloudinaryRef(photo.file_path)) {
-      const parsed = parseRef(photo.file_path);
-      ext = parsed.resourceType === "video" ? ".mp4" : ".jpg";
-    } else {
-      ext = photo.type === "video" ? ".mp4" : ".jpg";
-    }
-
+    const isVideo = photo.type === "video";
+    const ext = isVideo ? ".mp4" : ".jpg";
     const filename = `okim-art-${safeTitre}${ext}`;
 
+    // UTILISATION DU PROXY STREAMING EN SAME-ORIGIN (Évite l'effet dossier / 0ko sur iOS)
     if (isCloudinaryRef(photo.file_path)) {
-      const url = await signedPrivateUrl(photo.file_path, filename, { onRepair: repairSessionPhotoRef(photo.id) });
-      return res.redirect(url);
+      const stream = await openPrivateStream(photo.file_path, { onRepair: repairSessionPhotoRef(photo.id) });
+
+      if (stream.statusCode) res.status(stream.statusCode);
+
+      res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
+      res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+
+      if (stream.headers["content-length"]) {
+        res.setHeader("Content-Length", stream.headers["content-length"]);
+      }
+
+      req.on("close", () => {
+        if (stream && typeof stream.destroy === "function") stream.destroy();
+      });
+
+      return stream.pipe(res);
     }
 
+    // Fallback stockage local
     const fullPath = path.join(PERSIST_ROOT, photo.file_path);
     if (!fs.existsSync(fullPath)) {
       return res.status(404).json({ error: "Ce fichier local n'est plus disponible." });
     }
 
-    res.download(fullPath, filename, (err) => {
-      if (err && !res.headersSent) {
-        res.status(404).json({ error: "Ce fichier n'est plus disponible." });
-      }
-    });
+    res.setHeader("Content-Type", isVideo ? "video/mp4" : "image/jpeg");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+
+    return res.sendFile(fullPath);
   } catch (e) {
     console.error("[gallery] Erreur /download :", e.message);
     if (!res.headersSent) res.status(404).json({ error: "Erreur lors du téléchargement." });
@@ -302,3 +306,4 @@ router.post("/:token/kkiapay-confirm", requireGalleryAccess, async (req, res) =>
 });
 
 module.exports = router;
+
