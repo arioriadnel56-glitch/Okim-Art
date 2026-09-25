@@ -1,0 +1,214 @@
+// ============================================================
+// public/js/gallery.js — Interface Galerie Client OKIM ART
+// ============================================================
+(function () {
+  "use strict";
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Extraire le token de séance depuis l'URL (ex: /galerie.html?token=XYZ ou /g/XYZ)
+  function getGalleryToken() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("token")) return params.get("token");
+    var parts = window.location.pathname.split("/").filter(Boolean);
+    return parts[parts.length - 1] || "";
+  }
+
+  var token = getGalleryToken();
+  var sessionData = null;
+  var photosList = [];
+
+  // ============================================================
+  // TÉLÉCHARGEMENT & ENREGISTREMENT DANS LA GALERIE PHOTO MOBILE
+  // ============================================================
+  async function saveGalleryMedia(photoId, title, isVideo, btnEl) {
+    var originalText = btnEl ? btnEl.textContent : "Enregistrer dans Photos";
+    if (btnEl) {
+      btnEl.textContent = "Préparation…";
+      btnEl.style.pointerEvents = "none";
+    }
+
+    // Proxy streaming Same-Origin pour éviter le blocage CORS
+    var blobUrl = "/api/gallery/" + encodeURIComponent(token) + "/photos/" + encodeURIComponent(photoId) + "/blob";
+
+    try {
+      var response = await fetch(blobUrl);
+      if (!response.ok) {
+        var errJson = null;
+        try { errJson = await response.json(); } catch (_) {}
+        throw new Error((errJson && errJson.error) || ("Code d'erreur " + response.status));
+      }
+
+      var blob = await response.blob();
+      
+      // Type MIME strict et timestamp pour forcer la génération de la miniature visuelle sur iOS
+      var safeMime = isVideo ? "video/mp4" : "image/jpeg";
+      var ext = isVideo ? ".mp4" : ".jpg";
+      var safeTitle = (title || (isVideo ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+      var fileName = "okim-art-" + safeTitle + ext;
+
+      var file = new File([blob], fileName, { 
+        type: safeMime,
+        lastModified: Date.now() // Permet à Safari iOS de dessiner l'aperçu visuel de la photo
+      });
+
+      // 1. CAS MOBILE (iOS Safari / Android) : Ouvre le volet natif "Enregistrer dans Photos"
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: title || "Photo OKIM ART"
+          });
+          if (btnEl) {
+            btnEl.textContent = originalText;
+            btnEl.style.pointerEvents = "";
+          }
+          return;
+        } catch (shareErr) {
+          if (btnEl) {
+            btnEl.textContent = originalText;
+            btnEl.style.pointerEvents = "";
+          }
+          if (shareErr && shareErr.name === "AbortError") return; // Annulation volontaire par l'utilisateur
+        }
+      }
+
+      // 2. CAS DESKTOP / PC : Téléchargement direct classique
+      var objectUrl = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 15000);
+
+      if (btnEl) {
+        btnEl.textContent = originalText;
+        btnEl.style.pointerEvents = "";
+      }
+
+    } catch (err) {
+      console.error("[gallery.js] Erreur de sauvegarde :", err);
+      alert("Impossible de récupérer ce fichier : " + err.message);
+      if (btnEl) {
+        btnEl.textContent = originalText;
+        btnEl.style.pointerEvents = "";
+      }
+    }
+  }
+
+  // ============================================================
+  // INITIALISATION ET GESTION DES VUES
+  // ============================================================
+  function renderGallery(photos) {
+    photosList = photos || [];
+    var grid = document.getElementById("gallery-grid");
+    if (!grid) return;
+
+    if (!photosList.length) {
+      grid.innerHTML = '<p class="empty-msg">Aucune photo disponible dans cette séance.</p>';
+      return;
+    }
+
+    grid.innerHTML = photosList.map(function (p) {
+      var isVideo = p.type === "video";
+      var title = p.titre || (isVideo ? "Vidéo" : "Photo");
+      var viewUrl = "/api/gallery/" + encodeURIComponent(token) + "/photos/" + encodeURIComponent(p.id) + "/view";
+
+      return (
+        '<div class="photo-card" data-id="' + p.id + '">' +
+          '<div class="photo-thumb-wrap">' +
+            '<img src="' + esc(viewUrl) + '" alt="' + esc(title) + '" loading="lazy" class="photo-thumb">' +
+          '</div>' +
+          '<div class="photo-actions">' +
+            '<button type="button" class="btn-dl-photo" data-id="' + p.id + '" data-title="' + esc(title) + '" data-video="' + (isVideo ? "1" : "0") + '">' +
+              'Enregistrer dans Photos' +
+            '</button>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function loadGalleryContent() {
+    fetch("/api/gallery/" + encodeURIComponent(token))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+        sessionData = data.session;
+        renderGallery(data.photos);
+      })
+      .catch(function (err) {
+        console.error("Erreur chargement galerie :", err);
+      });
+  }
+
+  // ============================================================
+  // ÉVÉNEMENTS & DÉLÉGATION DU CLIC
+  // ============================================================
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!token) return;
+
+    // Gestion du formulaire PIN si présent
+    var pinForm = document.getElementById("pin-form");
+    if (pinForm) {
+      pinForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var pinInput = document.getElementById("pin-input");
+        var pinVal = pinInput ? pinInput.value.trim() : "";
+
+        fetch("/api/gallery/" + encodeURIComponent(token) + "/verify-pin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: pinVal })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res.error) {
+            alert(res.error);
+            return;
+          }
+          var pinView = document.getElementById("pin-view");
+          var galleryView = document.getElementById("gallery-main-view");
+          if (pinView) pinView.style.display = "none";
+          if (galleryView) galleryView.style.display = "block";
+          renderGallery(res.photos);
+        })
+        .catch(function (err) {
+          alert("Erreur de vérification PIN.");
+        });
+      });
+    }
+
+    // Délégation d'événement UNIQUE pour le bouton d'enregistrement
+    document.body.addEventListener("click", function (e) {
+      var btn = e.target.closest(".btn-dl-photo, [data-action='download-photo']");
+      if (!btn) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      var photoId = btn.dataset.id;
+      var title = btn.dataset.title;
+      var isVideo = btn.dataset.video === "1";
+
+      if (photoId) {
+        saveGalleryMedia(photoId, title, isVideo, btn);
+      }
+    });
+
+    // Chargement initial du contenu de la galerie
+    loadGalleryContent();
+  });
+
+  // Export global au besoin
+  window.saveGalleryMedia = saveGalleryMedia;
+})();
