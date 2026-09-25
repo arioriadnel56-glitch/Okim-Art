@@ -1,209 +1,160 @@
-// ============================================================
-// public/js/gallery.js — Interface Galerie Client OKIM ART
-// ============================================================
-(function () {
-  "use strict";
-
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-    });
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Galerie privée — OKIM ART</title>
+<link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#141a30">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/shop.css">
+<link rel="stylesheet" href="css/okimbox.css">
+<style>
+  .gallery-pin-card {
+    max-width: 420px;
+    margin: 3rem auto;
+    padding: 2rem;
+    background: var(--white, #fff);
+    border: 1px solid var(--line, #e2e8f0);
+    border-radius: var(--radius-sm, 12px);
+    text-align: center;
+    box-shadow: 0 10px 25px -5px rgba(20, 26, 48, 0.08);
   }
-
-  // Extraire le token de séance depuis l'URL (ex: /galerie.html?token=XYZ ou /g/XYZ)
-  function getGalleryToken() {
-    var params = new URLSearchParams(window.location.search);
-    if (params.get("token")) return params.get("token");
-    var parts = window.location.pathname.split("/").filter(Boolean);
-    return parts[parts.length - 1] || "";
+  .gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1.5rem;
+    margin-top: 2rem;
   }
-
-  var token = getGalleryToken();
-  var sessionData = null;
-  var photosList = [];
-
-  // ============================================================
-  // TÉLÉCHARGEMENT & ENREGISTREMENT DANS LA GALERIE PHOTO MOBILE
-  // ============================================================
-  async function saveGalleryMedia(photoId, title, isVideo, btnEl) {
-    var originalText = btnEl ? btnEl.textContent : "Enregistrer";
-    if (btnEl) {
-      btnEl.textContent = "Téléchargement…";
-      btnEl.style.pointerEvents = "none";
-    }
-
-    // Utilisation de la route proxy Same-Origin /blob (débloque navigator.share)
-    var blobUrl = "/api/gallery/" + encodeURIComponent(token) + "/photos/" + encodeURIComponent(photoId) + "/blob";
-
-    try {
-      var response = await fetch(blobUrl);
-      if (!response.ok) {
-        var errJson = null;
-        try { errJson = await response.json(); } catch (_) {}
-        throw new Error((errJson && errJson.error) || ("Code d'erreur " + response.status));
-      }
-
-      var blob = await response.blob();
-      var contentType = response.headers.get("content-type") || (isVideo ? "video/mp4" : "image/jpeg");
-      var ext = isVideo ? ".mp4" : ".jpg";
-      var safeTitle = (title || (isVideo ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-      var fileName = "okim-art-" + safeTitle + ext;
-
-      var file = new File([blob], fileName, { type: contentType });
-
-      // 1. CAS MOBILE (iOS Safari / Android) : Ouvre "Enregistrer dans Photos / Galerie"
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: title || "Photo OKIM ART"
-          });
-          if (btnEl) {
-            btnEl.textContent = originalText;
-            btnEl.style.pointerEvents = "";
-          }
-          return;
-        } catch (shareErr) {
-          if (btnEl) {
-            btnEl.textContent = originalText;
-            btnEl.style.pointerEvents = "";
-          }
-          if (shareErr && shareErr.name === "AbortError") return; // Annulation volontaire du client
-        }
-      }
-
-      // 2. CAS DESKTOP / PC : Téléchargement direct classique
-      var objectUrl = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 15000);
-
-      if (btnEl) {
-        btnEl.textContent = originalText;
-        btnEl.style.pointerEvents = "";
-      }
-
-    } catch (err) {
-      console.error("[gallery.js] Erreur de sauvegarde :", err);
-      alert("Impossible de télécharger la photo : " + err.message);
-      if (btnEl) {
-        btnEl.textContent = originalText;
-        btnEl.style.pointerEvents = "";
-      }
-    }
+  .photo-card {
+    background: var(--white, #fff);
+    border: 1px solid var(--line, #e2e8f0);
+    border-radius: var(--radius-sm, 12px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.2s, box-shadow 0.2s;
   }
-
-  // ============================================================
-  // INITIALISATION ET GESTION DES VUES
-  // ============================================================
-  function renderGallery(photos) {
-    photosList = photos || [];
-    var grid = document.getElementById("gallery-grid");
-    if (!grid) return;
-
-    if (!photosList.length) {
-      grid.innerHTML = '<p class="empty-msg">Aucune photo disponible dans cette séance.</p>';
-      return;
-    }
-
-    grid.innerHTML = photosList.map(function (p) {
-      var isVideo = p.type === "video";
-      var title = p.titre || (isVideo ? "Vidéo" : "Photo");
-      var viewUrl = "/api/gallery/" + encodeURIComponent(token) + "/photos/" + encodeURIComponent(p.id) + "/view";
-
-      return (
-        '<div class="photo-card" data-id="' + p.id + '">' +
-          '<div class="photo-thumb-wrap">' +
-            '<img src="' + esc(viewUrl) + '" alt="' + esc(title) + '" loading="lazy" class="photo-thumb">' +
-          '</div>' +
-          '<div class="photo-actions">' +
-            '<button type="button" class="btn-dl-photo" data-id="' + p.id + '" data-title="' + esc(title) + '" data-video="' + (isVideo ? "1" : "0") + '">' +
-              'Enregistrer dans Photos' +
-            '</button>' +
-          '</div>' +
-        '</div>'
-      );
-    }).join("");
+  .photo-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 30px -10px rgba(20, 26, 48, 0.15);
   }
-
-  function loadGalleryContent() {
-    fetch("/api/gallery/" + encodeURIComponent(token))
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.error) {
-          alert(data.error);
-          return;
-        }
-        sessionData = data.session;
-        renderGallery(data.photos);
-      })
-      .catch(function (err) {
-        console.error("Erreur chargement galerie :", err);
-      });
+  .photo-thumb-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: var(--paper-soft, #f8fafc);
+    overflow: hidden;
   }
+  .photo-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .photo-actions {
+    padding: 1rem;
+    display: flex;
+    justify-content: center;
+    background: var(--white, #fff);
+  }
+  .btn-dl-photo {
+    width: 100%;
+    padding: 0.65rem 1rem;
+    border: 1px solid var(--indigo, #4f46e5);
+    background: var(--indigo, #4f46e5);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  .btn-dl-photo:hover {
+    background: var(--indigo-deep, #3730a3);
+    border-color: var(--indigo-deep, #3730a3);
+  }
+  .instructions-box {
+    background: var(--paper-soft, #f8fafc);
+    border: 1px dashed var(--line, #cbd5e1);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 2rem;
+    font-size: 0.9rem;
+    color: var(--ink-soft, #475569);
+    text-align: center;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
 
-  // ============================================================
-  // ÉVÉNEMENTS & DÉLÉGATION DU CLIC
-  // ============================================================
-  document.addEventListener("DOMContentLoaded", function () {
-    if (!token) return;
+<header class="nav scrolled" id="nav">
+  <a href="index.html" class="brand"><img src="img/brand/logo.png" alt="OKIM ART" class="brand-logo" id="brand-logo-img"> OKIM ART</a>
+  <nav class="nav-links">
+    <a href="boutique.html">Boutique</a>
+    <a href="logiciels.html">Outils &amp; Logiciels</a>
+    <a href="index.html#contact">Contact</a>
+  </nav>
+  <div class="nav-right">
+    <a href="compte.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Mon espace client</a>
+  </div>
+</header>
 
-    // Attachement de la vérification PIN si présent
-    var pinForm = document.getElementById("pin-form");
-    if (pinForm) {
-      pinForm.addEventListener("submit", function (e) {
-        e.preventDefault();
-        var pinInput = document.getElementById("pin-input");
-        var pinVal = pinInput ? pinInput.value.trim() : "";
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow" style="justify-content:center"><span></span>Espace Privé</p>
+    <h1 id="page-title">Votre Galerie Photo</h1>
+  </div>
+</section>
 
-        fetch("/api/gallery/" + encodeURIComponent(token) + "/verify-pin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin: pinVal })
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (res) {
-          if (res.error) {
-            alert(res.error);
-            return;
-          }
-          var pinView = document.getElementById("pin-view");
-          var galleryView = document.getElementById("gallery-main-view");
-          if (pinView) pinView.style.display = "none";
-          if (galleryView) galleryView.style.display = "block";
-          renderGallery(res.photos);
-        })
-        .catch(function (err) {
-          alert("Erreur de vérification PIN.");
-        });
-      });
-    }
+<section class="page-section">
+  <div class="wrap">
 
-    // Délégation d'événement UNIQUE pour le bouton "Enregistrer dans Photos"
-    document.body.addEventListener("click", function (e) {
-      var btn = e.target.closest(".btn-dl-photo, [data-action='download-photo']");
-      if (!btn) return;
+    <!-- ===== VUE ACCÈS PIN (Affichée si protégée) ===== -->
+    <div id="pin-view" style="display:none;">
+      <div class="gallery-pin-card">
+        <h3 style="margin-top:0; font-family:var(--display, serif); font-size:1.25rem;">Galerie Protégée</h3>
+        <p style="color:var(--ink-soft, #64748b); font-size:.88rem; margin-bottom:1.5rem;">Veuillez saisir le code PIN fourni par OKIM ART pour accéder à vos photos.</p>
+        <form id="pin-form">
+          <div class="field" style="margin-bottom:1.2rem;">
+            <input type="password" id="pin-input" maxlength="10" placeholder="Code PIN" required style="text-align:center; font-size:1.2rem; letter-spacing:.2em;">
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Accéder à mes photos</button>
+        </form>
+      </div>
+    </div>
 
-      e.preventDefault();
-      e.stopPropagation();
+    <!-- ===== VUE GALERIE PRINCIPALE ===== -->
+    <div id="gallery-main-view">
+      <div class="instructions-box">
+        💡 <strong>Enregistrement dans vos photos :</strong> Cliquez sur le bouton sous une photo pour ouvrir le volet natif de votre téléphone et sélectionner <strong>« Enregistrer l'image »</strong>.
+      </div>
 
-      var photoId = btn.dataset.id;
-      var title = btn.dataset.title;
-      var isVideo = btn.dataset.video === "1";
+      <div id="gallery-grid" class="gallery-grid">
+        <!-- Rendu dynamique des photos via public/js/gallery.js -->
+      </div>
+    </div>
 
-      if (photoId) {
-        saveGalleryMedia(photoId, title, isVideo, btn);
-      }
-    });
+  </div>
+</section>
 
-    // Chargement initial si pas de masque PIN requis
-    loadGalleryContent();
-  });
+<footer>
+  <span class="f-brand"><img src="img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
+  <div class="f-socials"><a href="index.html#contact">Contact</a></div>
+</footer>
 
-  // Export global au besoin
-  window.saveGalleryMedia = saveGalleryMedia;
-})();
+<script src="js/gallery.js"></script>
+<script src="js/okimbox.js"></script>
+<script src="/js/pwa-register.js"></script>
+</body>
+</html>
