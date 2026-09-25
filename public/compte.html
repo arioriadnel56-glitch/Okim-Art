@@ -242,6 +242,10 @@
       .te-status-tag.publie{ background:#eaf6ec; color:#1f5c2b; border-color:#bfe3c6; }
       .te-status-tag.en_attente{ background:#fdf3e2; color:#8a5a13; border-color:#f0dcae; }
       .te-status-tag.rejete{ background:#fdecea; color:#8a2c22; border-color:#f3c4bd; }
+      
+      .order-item-line { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px dashed var(--line); }
+      .order-item-dl { all: unset; cursor: pointer; color: var(--indigo); font-weight: 500; font-size: 0.85rem; text-decoration: underline; }
+      .order-item-dl:hover { color: var(--brass); }
     </style>
 
   </div>
@@ -319,6 +323,49 @@
     fetch("/api/client/notifications/read-all", { method:"POST" }).then(loadClientNotifications);
   });
 
+  // Enregistre une photo/vidéo achetée avec déclenchement du volet natif ("Enregistrer dans Photos")
+  async function saveOrderMedia(url, filename, isVideo, triggerEl){
+    var originalText = triggerEl ? triggerEl.textContent : "Enregistrer";
+    if (triggerEl) { triggerEl.textContent = "Préparation…"; triggerEl.style.pointerEvents = "none"; }
+
+    var blob;
+    try {
+      var res = await fetch(url);
+      if (!res.ok) {
+        var errData = null;
+        try { errData = await res.json(); } catch (e) { }
+        throw new Error((errData && errData.error) || ("Téléchargement impossible (code " + res.status + ").")); 
+      }
+      blob = await res.blob();
+    } catch (e) {
+      if (triggerEl) { triggerEl.textContent = originalText; triggerEl.style.pointerEvents = ""; }
+      alert("Impossible de récupérer ce fichier pour le moment : " + e.message);
+      return;
+    }
+
+    var file = new File([blob], filename, { type: blob.type || (isVideo ? "video/mp4" : "image/jpeg") });
+
+    // 1. Déclenchement du partage natif (Mobile iOS/Android)
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+        if (triggerEl) { triggerEl.textContent = originalText; triggerEl.style.pointerEvents = ""; }
+        return;
+      } catch (e) {
+        if (triggerEl) { triggerEl.textContent = originalText; triggerEl.style.pointerEvents = ""; }
+        if (e && e.name === "AbortError") return; // Annulation volontaire par l'utilisateur
+      }
+    }
+
+    // 2. Repli : Téléchargement classique pour PC / Navigateurs non-compatibles
+    var objectUrl = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = objectUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(objectUrl); }, 15000);
+    if (triggerEl) { triggerEl.textContent = originalText; triggerEl.style.pointerEvents = ""; }
+  }
+
   function loadOrders(){
     fetch("/api/client/orders").then(function(r){ return r.json(); }).then(function(data){
       var orders = data.orders || [];
@@ -327,18 +374,27 @@
       document.getElementById("orders-empty").style.display = "none";
       wrap.innerHTML = orders.map(function(o){
         var items = (o.items||[]).map(function(it){
+          var isVideo = it.product_type === "video";
+          var filename = "okim-art-" + String(it.titre||"fichier").replace(/[^a-z0-9]+/gi,"-") + (isVideo ? ".mp4" : ".jpg");
           return '<div class="order-item-line"><span>'+esc(it.titre)+' × '+it.quantite+'</span>' +
-            (it.downloadUrl ? '<a href="'+esc(it.downloadUrl)+'">Télécharger</a>' : '<span style="color:var(--ink-soft)">Non disponible</span>') +
+            (it.downloadUrl ? '<button type="button" class="order-item-dl" data-url="'+esc(it.downloadUrl)+'" data-filename="'+esc(filename)+'" data-video="'+(isVideo?"1":"0")+'">Enregistrer dans Photos</button>' : '<span style="color:var(--ink-soft)">Indisponible</span>') +
           '</div>';
         }).join("");
-        return '<div class="order-card">' +
-          '<div class="head"><strong>'+esc(o.numero)+'</strong><span class="admin-tag">'+esc(STATUT_LABEL[o.statut]||o.statut)+'</span></div>' +
+        return '<div class="order-card" style="border:1px solid var(--line); border-radius:8px; padding:1.2rem; margin-bottom:1rem; background:var(--white)">' +
+          '<div class="head" style="display:flex; justify-content:space-between; margin-bottom:.8rem"><strong>'+esc(o.numero)+'</strong><span class="admin-tag">'+esc(STATUT_LABEL[o.statut]||o.statut)+'</span></div>' +
           '<div>'+items+'</div>' +
-          '<div style="text-align:right; margin-top:.6rem; font-family:var(--mono); font-size:.85rem; color:var(--ink-soft)">'+FCFA.format(o.montant)+' FCFA</div>' +
+          '<div style="text-align:right; margin-top:.8rem; font-family:var(--mono); font-size:.85rem; color:var(--ink-soft)">'+FCFA.format(o.montant)+' FCFA</div>' +
         '</div>';
       }).join("");
     });
   }
+
+  // Délégation d'événements UNIQUE pour les boutons d'enregistrement de média
+  document.getElementById("orders-list").addEventListener("click", function(e){
+    var btn = e.target.closest(".order-item-dl");
+    if (!btn) return;
+    saveOrderMedia(btn.dataset.url, btn.dataset.filename, btn.dataset.video === "1", btn);
+  });
 
   var SW_STATUT_LABEL = { active:"Active", expiree:"Expirée", suspendue:"Suspendue", annulee:"Annulée" };
 
@@ -473,7 +529,7 @@
       });
   });
 
-  // état initial
+  // État initial d'authentification
   fetch("/api/auth/client/me").then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
     if(data && data.client) showAccount(data.client); else showAuth();
   });
@@ -560,5 +616,6 @@
 })();
 </script>
 <script src="js/okimbox.js"></script>
+<script src="/js/pwa-register.js"></script>
 </body>
 </html>
