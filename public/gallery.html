@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/css/shop.css">
+<link rel="stylesheet" href="/css/okimbox.css">
 <script src="https://cdn.kkiapay.me/k.js"></script>
 </head>
 <body>
@@ -78,7 +79,7 @@
   <div class="f-socials"><a href="/index.html#contact">Contact</a></div>
 </footer>
 
-<!-- ===== VISIONNEUSE PLEIN ÉCRAN (essentielle sur iPhone) ===== -->
+<!-- ===== VISIONNEUSE PLEIN ÉCRAN ===== -->
 <div id="lightbox" class="lightbox" style="display:none">
   <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Fermer">&times;</button>
   <div class="lightbox-content" id="lightbox-content"></div>
@@ -91,7 +92,6 @@
   var FCFA = new Intl.NumberFormat("fr-FR");
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 
-  // Le token vient du chemin d'URL : /gallery/:token
   var token = window.location.pathname.split("/").filter(Boolean).pop();
   var galleryJwt = null;
   var currentSession = null;
@@ -100,16 +100,8 @@
     return Object.assign({ "Authorization": "Bearer " + galleryJwt }, extra || {});
   }
 
-  // Icône 📥 par défaut d'un bouton de téléchargement — remontée ici (avant
-  // était déclarée dans showGallery) car saveMedia() en a aussi besoin pour
-  // restaurer le bouton une fois le téléchargement terminé (voir plus bas).
   var dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5"/><path d="M4 19h16"/></svg>';
 
-  // Anneau de progression circulaire affiché à la place de l'icône pendant
-  // un téléchargement (voir fetchWithProgress + saveMedia ci-dessous).
-  // pct: nombre entre 0 et 1, ou null si la taille totale du fichier est
-  // inconnue (pas d'en-tête Content-Length) → anneau tournant "indéterminé"
-  // plutôt qu'un pourcentage trompeur.
   function progressRingSvg(pct){
     var r = 9, c = Math.round(2 * Math.PI * r);
     if (pct == null) {
@@ -125,22 +117,15 @@
       'transform="rotate(-90 12 12)"/></svg>';
   }
 
-  // Récupère un fichier en suivant sa progression octet par octet, pour
-  // afficher un vrai pourcentage pendant le téléchargement (et pas juste un
-  // état figé "en cours..." jusqu'à la fin). onProgress(pct, received, total)
-  // est appelé à chaque paquet reçu ; pct vaut null si le serveur n'envoie
-  // pas Content-Length (progression alors affichée comme "indéterminée").
   async function fetchWithProgress(url, options, onProgress){
     var res = await fetch(url, options);
     if (!res.ok) {
       var errData = null;
-      try { errData = await res.clone().json(); } catch (e) { /* réponse non-JSON */ }
+      try { errData = await res.clone().json(); } catch (e) { }
       throw new Error((errData && errData.error) || ("Téléchargement impossible (code " + res.status + ")."));
     }
     var total = Number(res.headers.get("Content-Length")) || 0;
     if (!res.body || !res.body.getReader) {
-      // Repli pour un navigateur sans support du streaming de réponse
-      // (très rare aujourd'hui) : pas de progression détaillée possible.
       var blobFallback = await res.blob();
       if (onProgress) onProgress(1, blobFallback.size, blobFallback.size);
       return blobFallback;
@@ -187,33 +172,17 @@
 
     var playIcon = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 
-    // URL de la vignette vidéo (frame extraite côté serveur par Cloudinary —
-    // voir GET /:token/photos/:photoId/thumbnail). Visible même séance
-    // verrouillée, comme l'aperçu filigrané d'une photo.
     function thumbnailUrl(photoId){
       return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/thumbnail?auth=" + encodeURIComponent(galleryJwt);
     }
 
     document.getElementById("photo-grid").innerHTML = photos.map(function(p){
-      // BUG CORRIGÉ : un <a href download> qui navigue directement vers
-      // l'URL pouvait afficher une page d'erreur brute du navigateur en cas
-      // de souci (redirection Cloudinary, réseau...), sans aucun contrôle
-      // possible. Remplacé par un <button> qui appelle saveMedia() en JS :
-      // toute erreur est désormais interceptée et affichée proprement,
-      // JAMAIS une page d'erreur du navigateur. Voir saveMedia() plus bas.
       var dlBtn = session.has_hd_access
         ? '<button type="button" class="gallery-dl" data-save-id="' + p.id + '" data-save-type="' + p.type + '" data-save-titre="' + esc(p.titre || "") + '" title="Enregistrer">' + dlIcon + '</button>'
         : "";
       var clickable = session.has_hd_access ? ' data-clickable' : '';
       var dataAttrs = ' data-id="' + p.id + '" data-type="' + p.type + '" data-titre="' + esc(p.titre || "") + '"';
       if (p.type === "video") {
-        // BUG CORRIGÉ : la grille n'affichait jamais qu'une icône générique
-        // grise pour une vidéo, jamais un vrai aperçu — contrairement aux
-        // photos — même une fois l'accès HD débloqué. La route /thumbnail
-        // existait déjà côté serveur mais n'était jamais appelée ici. En cas
-        // d'échec de chargement (ancien fichier local, vidéo corrompue...),
-        // un gestionnaire dédié (voir plus bas, événement "error" en phase de
-        // capture) bascule automatiquement vers l'icône générique de secours.
         return '<figure class="gallery-video-card"' + dataAttrs + clickable + '>' +
           '<img class="gv-thumb" src="' + thumbnailUrl(p.id) + '" alt="' + esc(p.titre || "Vidéo") + '" loading="lazy">' +
           '<span class="gv-play" aria-hidden="true">' + playIcon + '</span>' +
@@ -224,12 +193,6 @@
       return '<figure' + dataAttrs + clickable + '><img src="' + esc(p.watermark_path) + '" alt="' + esc(p.titre || "Photo") + '" loading="lazy">' + dlBtn + '</figure>';
     }).join("");
 
-    // Dissuasion contre la copie facile des aperçus (clic droit "Enregistrer
-    // l'image sous...", glisser-déposer vers le bureau). Ne bloque PAS une
-    // vraie capture d'écran — impossible depuis un site web, voir le
-    // commentaire dans public/css/shop.css. Un seul écouteur pour toute la
-    // grille (délégation) plutôt qu'un par image, y compris pour les
-    // vignettes ajoutées dynamiquement plus tard.
     document.getElementById("photo-grid").addEventListener("contextmenu", function(e){
       if (e.target.tagName === "IMG") e.preventDefault();
     });
@@ -237,10 +200,6 @@
       if (e.target.tagName === "IMG") e.preventDefault();
     });
 
-    // Repli propre si une vignette vidéo échoue à charger (ancien fichier
-    // local pré-migration, vidéo corrompue...) : icône générique à la place.
-    // Les événements "error" sur <img> ne remontent pas (pas de bubbling) —
-    // on écoute donc en phase de capture, une seule fois pour toute la grille.
     document.getElementById("photo-grid").addEventListener("error", function(e){
       var img = e.target;
       if (!img.classList || !img.classList.contains("gv-thumb")) return;
@@ -252,16 +211,10 @@
     }, true);
   }
 
-  // ---------- Visionneuse plein écran ----------
-  // NOTE : la visionneuse n'invite plus à l'appui long. Sur iPhone, ce
-  // geste déclenche parfois "Live Text" (reconnaissance de texte dans la
-  // photo — filigrane, pancarte, etc.) au lieu du menu "Enregistrer
-  // l'image" — un comportement système iOS que le site ne contrôle pas.
-  // Le bouton "Enregistrer" (saveMedia, partage natif) est donc la seule
-  // méthode mise en avant : fiable sur iPhone, Android et ordinateur.
   function viewUrl(photoId){
     return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/view?auth=" + encodeURIComponent(galleryJwt);
   }
+
   function openLightbox(id, type, titre){
     var content = document.getElementById("lightbox-content");
     var url = viewUrl(id);
@@ -274,9 +227,10 @@
     saveBtn.onclick = function(){ saveMedia(id, type, titre, saveBtn); };
     document.getElementById("lightbox").style.display = "flex";
   }
+
   function closeLightbox(){
     document.getElementById("lightbox").style.display = "none";
-    document.getElementById("lightbox-content").innerHTML = ""; // stoppe une vidéo en lecture
+    document.getElementById("lightbox-content").innerHTML = ""; 
     document.getElementById("lightbox-save").style.display = "none";
   }
 
@@ -284,37 +238,17 @@
     return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/blob?auth=" + encodeURIComponent(galleryJwt);
   }
 
-  // ---------- Enregistrement d'un fichier (bouton 📥) ----------
-  // Passe par fetch() + partage natif plutôt qu'une navigation directe vers
-  // l'URL : sur iPhone, ça ouvre le menu de partage natif d'iOS qui propose
-  // "Enregistrer l'image"/"Enregistrer la vidéo" — bien plus fiable que
-  // l'appui long, et surtout, toute erreur reste interceptable en JS au lieu
-  // d'afficher une page d'erreur brute du navigateur.
-  // BUG CORRIGÉ (CORS) : ce fetch() visait auparavant /view, qui REDIRIGE vers
-  // Cloudinary (autre domaine) — un fetch() vers une redirection cross-origin
-  // se heurte aux règles CORS et échouait silencieusement. /blob fait
-  // transiter les octets par notre propre serveur : le fetch() reste sur
-  // notre domaine, plus aucun souci CORS.
-  // BUG CORRIGÉ (geste utilisateur perdu) : Safari/iOS exige que
-  // navigator.share() soit appelé quasi immédiatement après le clic — un
-  // fetch() entre les deux (le temps de récupérer le fichier, plus long
-  // pour une vidéo que pour une photo) fait perdre ce "geste utilisateur",
-  // et share() échoue avec "Must be handling a user gesture...". Le code
-  // ne se rabattait AUPARAVANT sur le téléchargement classique que si
-  // canShare() renvoyait faux — jamais si share() lui-même échouait après
-  // coup, ce qui explique l'erreur bloquante observée. On intercepte
-  // maintenant CET échec précis pour basculer sur le repli automatiquement.
+  // ---------- Enregistrement d'un fichier avec Miniature iOS ----------
   async function saveMedia(id, type, titre, triggerEl){
-    var ext = type === "video" ? "mp4" : "jpg";
-    var filename = "okim-art-" + (titre || type).replace(/[^a-z0-9]+/gi, "-") + "." + ext;
+    var isVideo = type === "video";
+    var ext = isVideo ? "mp4" : "jpg";
+    var safeMime = isVideo ? "video/mp4" : "image/jpeg";
+    var filename = "okim-art-" + (titre || type).replace(/[^a-z0-9]+/gi, "-").toLowerCase() + "." + ext;
 
-    // État visuel pendant le téléchargement : anneau de progression pour le
-    // petit bouton rond de la grille (data-save-id), pourcentage textuel
-    // pour le bouton plein texte de la visionneuse (#lightbox-save) — deux
-    // rendus différents car l'espace disponible n'est pas le même.
     var isGridBtn = triggerEl && triggerEl.hasAttribute("data-save-id");
     var originalContent = triggerEl ? triggerEl.innerHTML : null;
     var originalText = triggerEl ? triggerEl.textContent : null;
+
     function updateProgress(pct){
       if (!triggerEl) return;
       if (isGridBtn) {
@@ -325,6 +259,7 @@
           : "Téléchargement… " + Math.round(pct * 100) + "%";
       }
     }
+
     function restoreButton(){
       if (!triggerEl) return;
       if (isGridBtn) triggerEl.innerHTML = originalContent != null ? originalContent : dlIcon;
@@ -343,29 +278,22 @@
       return;
     }
 
-    var file = new File([blob], filename, { type: blob.type || (type === "video" ? "video/mp4" : "image/jpeg") });
+    // CORRECTION iOS : lastModified + type MIME strict pour forcer la miniature visuelle dans le volet natif
+    var file = new File([blob], filename, { 
+      type: safeMime,
+      lastModified: Date.now()
+    });
 
-    // 1) Partage natif (iOS/Android récents) : propose "Enregistrer
-    // l'image/la vidéo" directement dans le menu de partage du système.
-    // Purement "best effort" : s'il échoue pour n'importe quelle raison
-    // (annulation, geste utilisateur expiré...), on bascule silencieusement
-    // sur le téléchargement classique ci-dessous plutôt que d'interrompre
-    // l'utilisateur avec une erreur.
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file] });
         restoreButton();
         return;
       } catch (e) {
-        if (e && e.name === "AbortError") { restoreButton(); return; } // annulation volontaire : on s'arrête là, pas d'erreur
-        // Toute autre erreur (ex. geste utilisateur expiré) : on continue
-        // vers le repli ci-dessous au lieu d'abandonner.
+        if (e && e.name === "AbortError") { restoreButton(); return; }
       }
     }
 
-    // 2) Repli : téléchargement classique via un lien temporaire (fonctionne
-    // bien sur ordinateur et sur la plupart des navigateurs Android — et
-    // c'est le filet de sécurité pour Safari quand le partage natif échoue).
     var objectUrl = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = objectUrl; a.download = filename;
@@ -384,6 +312,7 @@
     if (!fig) return;
     openLightbox(fig.getAttribute("data-id"), fig.getAttribute("data-type"), fig.getAttribute("data-titre"));
   });
+
   document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
   document.getElementById("lightbox").addEventListener("click", function(e){
     if (e.target.id === "lightbox") closeLightbox();
@@ -409,18 +338,18 @@
       .catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
   });
 
-  // ---------- Téléchargement ZIP (nécessite l'en-tête Authorization → fetch + blob) ----------
+  // ---------- Téléchargement ZIP ----------
   document.getElementById("download-btn").addEventListener("click", function(){
     var btn = this;
     var original = btn.textContent;
-    btn.textContent = "Préparation de l'archive…"; // le serveur assemble le ZIP avant d'envoyer le premier octet — pas de % possible pendant cette phase
+    btn.textContent = "Préparation de l'archive…";
     btn.disabled = true;
     fetchWithProgress(
       "/api/gallery/" + encodeURIComponent(token) + "/download",
       { headers: authHeaders() },
       function(pct){
         btn.textContent = pct == null
-          ? "Téléchargement en cours…" // taille totale inconnue (pas de Content-Length) : pas de % fiable, juste un indicateur d'activité
+          ? "Téléchargement en cours…"
           : "Téléchargement… " + Math.round(pct * 100) + "%";
       }
     )
@@ -472,7 +401,7 @@
     }).then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
       .then(function(res){
         if (res.status === 200 && res.data.ok) {
-          window.location.reload(); // recharge la galerie avec l'accès HD débloqué
+          window.location.reload();
         } else if (res.status === 202 && attempt < 8) {
           setTimeout(function(){ confirmRecoveryPayment(transactionId, attempt + 1); }, 3000);
         } else {
@@ -496,6 +425,7 @@
   document.addEventListener("scroll", function(){ if (window.scrollY > 40) nav.classList.add("scrolled"); }, { passive: true });
 })();
 </script>
+<script src="/js/okimbox.js?v=2.1"></script>
 <script src="/js/pwa-register.js"></script>
 </body>
 </html>
