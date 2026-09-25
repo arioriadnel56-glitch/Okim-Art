@@ -1,500 +1,209 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ma galerie — OKIM ART</title>
-<link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
-<link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
-<link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#141a30">
-<meta name="robots" content="noindex, nofollow">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/css/shop.css">
-<script src="https://cdn.kkiapay.me/k.js"></script>
-</head>
-<body>
-
-<header class="nav scrolled" id="nav">
-  <a href="/index.html" class="brand"><img src="/img/brand/logo.png" alt="OKIM ART" class="brand-logo"> OKIM ART</a>
-  <nav class="nav-links">
-    <a href="/boutique.html">Boutique</a>
-    <a href="/index.html#contact">Contact</a>
-  </nav>
-</header>
-
-<section class="page-hero">
-  <div class="wrap">
-    <p class="eyebrow" style="justify-content:center"><span></span>Galerie privée</p>
-    <h1 id="gallery-title">Vos photos OKIM ART</h1>
-    <p>Cette galerie est protégée par un code confidentiel à 6 chiffres transmis par le studio — jamais votre numéro de téléphone.</p>
-  </div>
-</section>
-
-<section class="page-section">
-  <div class="wrap">
-
-    <!-- ===== SAISIE DU CODE PIN ===== -->
-    <div id="pin-view" class="form-card" style="max-width:420px; margin:0 auto">
-      <div class="form-error" id="pin-error"></div>
-      <form id="pin-form">
-        <div class="field">
-          <label>Code PIN à 6 chiffres</label>
-          <input type="text" id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" required>
-        </div>
-        <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center">Accéder à ma galerie</button>
-      </form>
-      <p class="form-note">Code perdu ou jamais reçu ? Contactez OKIM ART directement — le studio peut vous en générer un nouveau.</p>
-    </div>
-
-    <!-- ===== GALERIE (après validation du PIN) ===== -->
-    <div id="gallery-view" style="display:none">
-      <div id="status-banner" class="gallery-status-banner"></div>
-      <p class="gallery-hint" id="gallery-hint" style="display:none">📥 Touchez une photo pour l'agrandir, puis utilisez le bouton en bas de l'image pour l'enregistrer directement dans votre galerie.</p>
-      <div id="photo-grid" class="gallery-grid"></div>
-
-      <div class="gallery-actions">
-        <button type="button" class="btn btn-primary" id="download-btn" style="display:none">Télécharger toutes mes photos (ZIP)</button>
-
-        <div id="recovery-block" style="display:none; max-width:420px; margin:0 auto">
-          <p style="color:var(--ink-soft); font-size:.9rem; margin-bottom:1rem">
-            La période de conservation gratuite de cette séance est terminée. Débloquez à nouveau vos photos en haute résolution pour <strong id="recovery-amount"></strong>, accès valable 48h.
-          </p>
-          <button type="button" class="btn btn-primary" id="recover-btn" style="width:100%; justify-content:center">Récupérer mes photos perdues</button>
-          <div class="form-success" id="recovery-verifying" style="display:none; margin-top:1rem">Vérification du paiement en cours…</div>
-          <div class="form-error" id="recovery-error" style="display:none; margin-top:1rem"></div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-</section>
-
-<footer>
-  <span class="f-brand"><img src="/img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
-  <div class="f-socials"><a href="/index.html#contact">Contact</a></div>
-</footer>
-
-<!-- ===== VISIONNEUSE PLEIN ÉCRAN (essentielle sur iPhone) ===== -->
-<div id="lightbox" class="lightbox" style="display:none">
-  <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Fermer">&times;</button>
-  <div class="lightbox-content" id="lightbox-content"></div>
-  <button type="button" id="lightbox-save" class="btn btn-primary" style="margin-top:1.2rem; display:none"></button>
-</div>
-
-<script>
-(function(){
+// ============================================================
+// public/js/gallery.js — Interface Galerie Client OKIM ART
+// ============================================================
+(function () {
   "use strict";
-  var FCFA = new Intl.NumberFormat("fr-FR");
-  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 
-  // Le token vient du chemin d'URL : /gallery/:token
-  var token = window.location.pathname.split("/").filter(Boolean).pop();
-  var galleryJwt = null;
-  var currentSession = null;
-
-  function authHeaders(extra){
-    return Object.assign({ "Authorization": "Bearer " + galleryJwt }, extra || {});
-  }
-
-  // Icône 📥 par défaut d'un bouton de téléchargement — remontée ici (avant
-  // était déclarée dans showGallery) car saveMedia() en a aussi besoin pour
-  // restaurer le bouton une fois le téléchargement terminé (voir plus bas).
-  var dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5"/><path d="M4 19h16"/></svg>';
-
-  // Anneau de progression circulaire affiché à la place de l'icône pendant
-  // un téléchargement (voir fetchWithProgress + saveMedia ci-dessous).
-  // pct: nombre entre 0 et 1, ou null si la taille totale du fichier est
-  // inconnue (pas d'en-tête Content-Length) → anneau tournant "indéterminé"
-  // plutôt qu'un pourcentage trompeur.
-  function progressRingSvg(pct){
-    var r = 9, c = Math.round(2 * Math.PI * r);
-    if (pct == null) {
-      return '<svg viewBox="0 0 24 24" class="dl-progress-ring indeterminate">' +
-        '<circle cx="12" cy="12" r="' + r + '" fill="none" stroke="currentColor" stroke-width="2.4" ' +
-        'stroke-dasharray="' + Math.round(c * 0.25) + ' ' + c + '" stroke-linecap="round"/></svg>';
-    }
-    var offset = Math.round(c * (1 - Math.max(0, Math.min(1, pct))));
-    return '<svg viewBox="0 0 24 24" class="dl-progress-ring">' +
-      '<circle cx="12" cy="12" r="' + r + '" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="2.4"/>' +
-      '<circle cx="12" cy="12" r="' + r + '" fill="none" stroke="currentColor" stroke-width="2.4" ' +
-      'stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" ' +
-      'transform="rotate(-90 12 12)"/></svg>';
-  }
-
-  // Récupère un fichier en suivant sa progression octet par octet, pour
-  // afficher un vrai pourcentage pendant le téléchargement (et pas juste un
-  // état figé "en cours..." jusqu'à la fin). onProgress(pct, received, total)
-  // est appelé à chaque paquet reçu ; pct vaut null si le serveur n'envoie
-  // pas Content-Length (progression alors affichée comme "indéterminée").
-  async function fetchWithProgress(url, options, onProgress){
-    var res = await fetch(url, options);
-    if (!res.ok) {
-      var errData = null;
-      try { errData = await res.clone().json(); } catch (e) { /* réponse non-JSON */ }
-      throw new Error((errData && errData.error) || ("Téléchargement impossible (code " + res.status + ")."));
-    }
-    var total = Number(res.headers.get("Content-Length")) || 0;
-    if (!res.body || !res.body.getReader) {
-      // Repli pour un navigateur sans support du streaming de réponse
-      // (très rare aujourd'hui) : pas de progression détaillée possible.
-      var blobFallback = await res.blob();
-      if (onProgress) onProgress(1, blobFallback.size, blobFallback.size);
-      return blobFallback;
-    }
-    var reader = res.body.getReader();
-    var chunks = [];
-    var received = 0;
-    for (;;) {
-      var step = await reader.read();
-      if (step.done) break;
-      chunks.push(step.value);
-      received += step.value.length;
-      if (onProgress) onProgress(total ? received / total : null, received, total);
-    }
-    return new Blob(chunks, { type: res.headers.get("Content-Type") || undefined });
-  }
-
-  function showGallery(session, photos){
-    currentSession = session;
-    document.getElementById("pin-view").style.display = "none";
-    document.getElementById("gallery-view").style.display = "block";
-    document.getElementById("gallery-title").textContent = "Bonjour " + session.client_name + " 👋";
-
-    var banner = document.getElementById("status-banner");
-    var downloadBtn = document.getElementById("download-btn");
-    var recoveryBlock = document.getElementById("recovery-block");
-
-    if (session.has_hd_access) {
-      banner.className = "gallery-status-banner unlocked";
-      banner.textContent = session.status === "active"
-        ? "Vos photos sont disponibles gratuitement jusqu'au " + new Date(session.expires_at).toLocaleDateString("fr-FR") + "."
-        : "Accès haute résolution débloqué jusqu'au " + new Date(session.hd_unlocked_until).toLocaleString("fr-FR") + ".";
-      downloadBtn.style.display = "inline-flex";
-      recoveryBlock.style.display = "none";
-      document.getElementById("gallery-hint").style.display = "block";
-    } else {
-      banner.className = "gallery-status-banner locked";
-      banner.textContent = "Cette séance est archivée : les aperçus restent visibles ci-dessous, mais le téléchargement haute résolution nécessite une récupération.";
-      downloadBtn.style.display = "none";
-      recoveryBlock.style.display = "block";
-      document.getElementById("recovery-amount").textContent = FCFA.format(session.recovery_price) + " FCFA";
-      document.getElementById("gallery-hint").style.display = "none";
-    }
-
-    var playIcon = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-
-    // URL de la vignette vidéo (frame extraite côté serveur par Cloudinary —
-    // voir GET /:token/photos/:photoId/thumbnail). Visible même séance
-    // verrouillée, comme l'aperçu filigrané d'une photo.
-    function thumbnailUrl(photoId){
-      return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/thumbnail?auth=" + encodeURIComponent(galleryJwt);
-    }
-
-    document.getElementById("photo-grid").innerHTML = photos.map(function(p){
-      // BUG CORRIGÉ : un <a href download> qui navigue directement vers
-      // l'URL pouvait afficher une page d'erreur brute du navigateur en cas
-      // de souci (redirection Cloudinary, réseau...), sans aucun contrôle
-      // possible. Remplacé par un <button> qui appelle saveMedia() en JS :
-      // toute erreur est désormais interceptée et affichée proprement,
-      // JAMAIS une page d'erreur du navigateur. Voir saveMedia() plus bas.
-      var dlBtn = session.has_hd_access
-        ? '<button type="button" class="gallery-dl" data-save-id="' + p.id + '" data-save-type="' + p.type + '" data-save-titre="' + esc(p.titre || "") + '" title="Enregistrer">' + dlIcon + '</button>'
-        : "";
-      var clickable = session.has_hd_access ? ' data-clickable' : '';
-      var dataAttrs = ' data-id="' + p.id + '" data-type="' + p.type + '" data-titre="' + esc(p.titre || "") + '"';
-      if (p.type === "video") {
-        // BUG CORRIGÉ : la grille n'affichait jamais qu'une icône générique
-        // grise pour une vidéo, jamais un vrai aperçu — contrairement aux
-        // photos — même une fois l'accès HD débloqué. La route /thumbnail
-        // existait déjà côté serveur mais n'était jamais appelée ici. En cas
-        // d'échec de chargement (ancien fichier local, vidéo corrompue...),
-        // un gestionnaire dédié (voir plus bas, événement "error" en phase de
-        // capture) bascule automatiquement vers l'icône générique de secours.
-        return '<figure class="gallery-video-card"' + dataAttrs + clickable + '>' +
-          '<img class="gv-thumb" src="' + thumbnailUrl(p.id) + '" alt="' + esc(p.titre || "Vidéo") + '" loading="lazy">' +
-          '<span class="gv-play" aria-hidden="true">' + playIcon + '</span>' +
-          '<figcaption>' + esc(p.titre || "Vidéo") + (session.has_hd_access ? '' : '<br><small>Vidéo verrouillée</small>') + '</figcaption>' +
-          dlBtn +
-        '</figure>';
-      }
-      return '<figure' + dataAttrs + clickable + '><img src="' + esc(p.watermark_path) + '" alt="' + esc(p.titre || "Photo") + '" loading="lazy">' + dlBtn + '</figure>';
-    }).join("");
-
-    // Dissuasion contre la copie facile des aperçus (clic droit "Enregistrer
-    // l'image sous...", glisser-déposer vers le bureau). Ne bloque PAS une
-    // vraie capture d'écran — impossible depuis un site web, voir le
-    // commentaire dans public/css/shop.css. Un seul écouteur pour toute la
-    // grille (délégation) plutôt qu'un par image, y compris pour les
-    // vignettes ajoutées dynamiquement plus tard.
-    document.getElementById("photo-grid").addEventListener("contextmenu", function(e){
-      if (e.target.tagName === "IMG") e.preventDefault();
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
-    document.getElementById("photo-grid").addEventListener("dragstart", function(e){
-      if (e.target.tagName === "IMG") e.preventDefault();
-    });
-
-    // Repli propre si une vignette vidéo échoue à charger (ancien fichier
-    // local pré-migration, vidéo corrompue...) : icône générique à la place.
-    // Les événements "error" sur <img> ne remontent pas (pas de bubbling) —
-    // on écoute donc en phase de capture, une seule fois pour toute la grille.
-    document.getElementById("photo-grid").addEventListener("error", function(e){
-      var img = e.target;
-      if (!img.classList || !img.classList.contains("gv-thumb")) return;
-      var span = document.createElement("span");
-      span.className = "gv-icon-fallback";
-      span.setAttribute("aria-hidden", "true");
-      span.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h11v12H4z"/><path d="M15 10l5-3v10l-5-3"/></svg>';
-      img.replaceWith(span);
-    }, true);
   }
 
-  // ---------- Visionneuse plein écran ----------
-  // NOTE : la visionneuse n'invite plus à l'appui long. Sur iPhone, ce
-  // geste déclenche parfois "Live Text" (reconnaissance de texte dans la
-  // photo — filigrane, pancarte, etc.) au lieu du menu "Enregistrer
-  // l'image" — un comportement système iOS que le site ne contrôle pas.
-  // Le bouton "Enregistrer" (saveMedia, partage natif) est donc la seule
-  // méthode mise en avant : fiable sur iPhone, Android et ordinateur.
-  function viewUrl(photoId){
-    return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/view?auth=" + encodeURIComponent(galleryJwt);
-  }
-  function openLightbox(id, type, titre){
-    var content = document.getElementById("lightbox-content");
-    var url = viewUrl(id);
-    content.innerHTML = type === "video"
-      ? '<video src="' + url + '" controls playsinline preload="metadata"></video>'
-      : '<img src="' + url + '" alt="' + esc(titre || "Photo") + '">';
-    var saveBtn = document.getElementById("lightbox-save");
-    saveBtn.style.display = "inline-flex";
-    saveBtn.textContent = type === "video" ? "📥 Enregistrer la vidéo" : "📥 Enregistrer la photo";
-    saveBtn.onclick = function(){ saveMedia(id, type, titre, saveBtn); };
-    document.getElementById("lightbox").style.display = "flex";
-  }
-  function closeLightbox(){
-    document.getElementById("lightbox").style.display = "none";
-    document.getElementById("lightbox-content").innerHTML = ""; // stoppe une vidéo en lecture
-    document.getElementById("lightbox-save").style.display = "none";
+  // Extraire le token de séance depuis l'URL (ex: /galerie.html?token=XYZ ou /g/XYZ)
+  function getGalleryToken() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("token")) return params.get("token");
+    var parts = window.location.pathname.split("/").filter(Boolean);
+    return parts[parts.length - 1] || "";
   }
 
-  function blobUrl(photoId){
-    return "/api/gallery/" + encodeURIComponent(token) + "/photos/" + photoId + "/blob?auth=" + encodeURIComponent(galleryJwt);
-  }
+  var token = getGalleryToken();
+  var sessionData = null;
+  var photosList = [];
 
-  // ---------- Enregistrement d'un fichier (bouton 📥) ----------
-  // Passe par fetch() + partage natif plutôt qu'une navigation directe vers
-  // l'URL : sur iPhone, ça ouvre le menu de partage natif d'iOS qui propose
-  // "Enregistrer l'image"/"Enregistrer la vidéo" — bien plus fiable que
-  // l'appui long, et surtout, toute erreur reste interceptable en JS au lieu
-  // d'afficher une page d'erreur brute du navigateur.
-  // BUG CORRIGÉ (CORS) : ce fetch() visait auparavant /view, qui REDIRIGE vers
-  // Cloudinary (autre domaine) — un fetch() vers une redirection cross-origin
-  // se heurte aux règles CORS et échouait silencieusement. /blob fait
-  // transiter les octets par notre propre serveur : le fetch() reste sur
-  // notre domaine, plus aucun souci CORS.
-  // BUG CORRIGÉ (geste utilisateur perdu) : Safari/iOS exige que
-  // navigator.share() soit appelé quasi immédiatement après le clic — un
-  // fetch() entre les deux (le temps de récupérer le fichier, plus long
-  // pour une vidéo que pour une photo) fait perdre ce "geste utilisateur",
-  // et share() échoue avec "Must be handling a user gesture...". Le code
-  // ne se rabattait AUPARAVANT sur le téléchargement classique que si
-  // canShare() renvoyait faux — jamais si share() lui-même échouait après
-  // coup, ce qui explique l'erreur bloquante observée. On intercepte
-  // maintenant CET échec précis pour basculer sur le repli automatiquement.
-  async function saveMedia(id, type, titre, triggerEl){
-    var ext = type === "video" ? "mp4" : "jpg";
-    var filename = "okim-art-" + (titre || type).replace(/[^a-z0-9]+/gi, "-") + "." + ext;
-
-    // État visuel pendant le téléchargement : anneau de progression pour le
-    // petit bouton rond de la grille (data-save-id), pourcentage textuel
-    // pour le bouton plein texte de la visionneuse (#lightbox-save) — deux
-    // rendus différents car l'espace disponible n'est pas le même.
-    var isGridBtn = triggerEl && triggerEl.hasAttribute("data-save-id");
-    var originalContent = triggerEl ? triggerEl.innerHTML : null;
-    var originalText = triggerEl ? triggerEl.textContent : null;
-    function updateProgress(pct){
-      if (!triggerEl) return;
-      if (isGridBtn) {
-        triggerEl.innerHTML = progressRingSvg(pct);
-      } else {
-        triggerEl.textContent = pct == null
-          ? "Téléchargement…"
-          : "Téléchargement… " + Math.round(pct * 100) + "%";
-      }
-    }
-    function restoreButton(){
-      if (!triggerEl) return;
-      if (isGridBtn) triggerEl.innerHTML = originalContent != null ? originalContent : dlIcon;
-      else triggerEl.textContent = originalText;
-      triggerEl.disabled = false;
+  // ============================================================
+  // TÉLÉCHARGEMENT & ENREGISTREMENT DANS LA GALERIE PHOTO MOBILE
+  // ============================================================
+  async function saveGalleryMedia(photoId, title, isVideo, btnEl) {
+    var originalText = btnEl ? btnEl.textContent : "Enregistrer";
+    if (btnEl) {
+      btnEl.textContent = "Téléchargement…";
+      btnEl.style.pointerEvents = "none";
     }
 
-    if (triggerEl) { triggerEl.disabled = true; updateProgress(null); }
+    // Utilisation de la route proxy Same-Origin /blob (débloque navigator.share)
+    var blobUrl = "/api/gallery/" + encodeURIComponent(token) + "/photos/" + encodeURIComponent(photoId) + "/blob";
 
-    var blob;
     try {
-      blob = await fetchWithProgress(blobUrl(id), {}, function(pct){ updateProgress(pct); });
-    } catch (e) {
-      restoreButton();
-      alert("Impossible de récupérer ce fichier pour le moment : " + e.message);
-      return;
-    }
+      var response = await fetch(blobUrl);
+      if (!response.ok) {
+        var errJson = null;
+        try { errJson = await response.json(); } catch (_) {}
+        throw new Error((errJson && errJson.error) || ("Code d'erreur " + response.status));
+      }
 
-    var file = new File([blob], filename, { type: blob.type || (type === "video" ? "video/mp4" : "image/jpeg") });
+      var blob = await response.blob();
+      var contentType = response.headers.get("content-type") || (isVideo ? "video/mp4" : "image/jpeg");
+      var ext = isVideo ? ".mp4" : ".jpg";
+      var safeTitle = (title || (isVideo ? "video" : "photo")).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+      var fileName = "okim-art-" + safeTitle + ext;
 
-    // 1) Partage natif (iOS/Android récents) : propose "Enregistrer
-    // l'image/la vidéo" directement dans le menu de partage du système.
-    // Purement "best effort" : s'il échoue pour n'importe quelle raison
-    // (annulation, geste utilisateur expiré...), on bascule silencieusement
-    // sur le téléchargement classique ci-dessous plutôt que d'interrompre
-    // l'utilisateur avec une erreur.
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file] });
-        restoreButton();
-        return;
-      } catch (e) {
-        if (e && e.name === "AbortError") { restoreButton(); return; } // annulation volontaire : on s'arrête là, pas d'erreur
-        // Toute autre erreur (ex. geste utilisateur expiré) : on continue
-        // vers le repli ci-dessous au lieu d'abandonner.
+      var file = new File([blob], fileName, { type: contentType });
+
+      // 1. CAS MOBILE (iOS Safari / Android) : Ouvre "Enregistrer dans Photos / Galerie"
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: title || "Photo OKIM ART"
+          });
+          if (btnEl) {
+            btnEl.textContent = originalText;
+            btnEl.style.pointerEvents = "";
+          }
+          return;
+        } catch (shareErr) {
+          if (btnEl) {
+            btnEl.textContent = originalText;
+            btnEl.style.pointerEvents = "";
+          }
+          if (shareErr && shareErr.name === "AbortError") return; // Annulation volontaire du client
+        }
+      }
+
+      // 2. CAS DESKTOP / PC : Téléchargement direct classique
+      var objectUrl = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 15000);
+
+      if (btnEl) {
+        btnEl.textContent = originalText;
+        btnEl.style.pointerEvents = "";
+      }
+
+    } catch (err) {
+      console.error("[gallery.js] Erreur de sauvegarde :", err);
+      alert("Impossible de télécharger la photo : " + err.message);
+      if (btnEl) {
+        btnEl.textContent = originalText;
+        btnEl.style.pointerEvents = "";
       }
     }
-
-    // 2) Repli : téléchargement classique via un lien temporaire (fonctionne
-    // bien sur ordinateur et sur la plupart des navigateurs Android — et
-    // c'est le filet de sécurité pour Safari quand le partage natif échoue).
-    var objectUrl = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = objectUrl; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(objectUrl); }, 15000);
-    restoreButton();
   }
 
-  document.getElementById("photo-grid").addEventListener("click", function(e){
-    var saveBtn = e.target.closest("[data-save-id]");
-    if (saveBtn) {
-      saveMedia(saveBtn.getAttribute("data-save-id"), saveBtn.getAttribute("data-save-type"), saveBtn.getAttribute("data-save-titre"), saveBtn);
+  // ============================================================
+  // INITIALISATION ET GESTION DES VUES
+  // ============================================================
+  function renderGallery(photos) {
+    photosList = photos || [];
+    var grid = document.getElementById("gallery-grid");
+    if (!grid) return;
+
+    if (!photosList.length) {
+      grid.innerHTML = '<p class="empty-msg">Aucune photo disponible dans cette séance.</p>';
       return;
     }
-    var fig = e.target.closest("figure[data-clickable]");
-    if (!fig) return;
-    openLightbox(fig.getAttribute("data-id"), fig.getAttribute("data-type"), fig.getAttribute("data-titre"));
-  });
-  document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
-  document.getElementById("lightbox").addEventListener("click", function(e){
-    if (e.target.id === "lightbox") closeLightbox();
-  });
-  document.addEventListener("keydown", function(e){
-    if (e.key === "Escape") closeLightbox();
-  });
 
-  // ---------- Saisie du PIN ----------
-  document.getElementById("pin-form").addEventListener("submit", function(e){
-    e.preventDefault();
-    var err = document.getElementById("pin-error");
-    err.classList.remove("show");
-    fetch("/api/gallery/" + encodeURIComponent(token) + "/verify-pin", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin: document.getElementById("pin-input").value })
-    }).then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
-      .then(function(res){
-        if (res.status !== 200) throw new Error(res.data.error || "Code PIN incorrect.");
-        galleryJwt = res.data.token;
-        showGallery(res.data.session, res.data.photos);
-      })
-      .catch(function(e2){ err.textContent = e2.message; err.classList.add("show"); });
-  });
+    grid.innerHTML = photosList.map(function (p) {
+      var isVideo = p.type === "video";
+      var title = p.titre || (isVideo ? "Vidéo" : "Photo");
+      var viewUrl = "/api/gallery/" + encodeURIComponent(token) + "/photos/" + encodeURIComponent(p.id) + "/view";
 
-  // ---------- Téléchargement ZIP (nécessite l'en-tête Authorization → fetch + blob) ----------
-  document.getElementById("download-btn").addEventListener("click", function(){
-    var btn = this;
-    var original = btn.textContent;
-    btn.textContent = "Préparation de l'archive…"; // le serveur assemble le ZIP avant d'envoyer le premier octet — pas de % possible pendant cette phase
-    btn.disabled = true;
-    fetchWithProgress(
-      "/api/gallery/" + encodeURIComponent(token) + "/download",
-      { headers: authHeaders() },
-      function(pct){
-        btn.textContent = pct == null
-          ? "Téléchargement en cours…" // taille totale inconnue (pas de Content-Length) : pas de % fiable, juste un indicateur d'activité
-          : "Téléchargement… " + Math.round(pct * 100) + "%";
-      }
-    )
-      .then(function(blob){
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement("a");
-        a.href = url; a.download = "okim-art-photos.zip";
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
-      })
-      .catch(function(e2){ alert(e2.message); })
-      .finally(function(){ btn.textContent = original; btn.disabled = false; });
-  });
+      return (
+        '<div class="photo-card" data-id="' + p.id + '">' +
+          '<div class="photo-thumb-wrap">' +
+            '<img src="' + esc(viewUrl) + '" alt="' + esc(title) + '" loading="lazy" class="photo-thumb">' +
+          '</div>' +
+          '<div class="photo-actions">' +
+            '<button type="button" class="btn-dl-photo" data-id="' + p.id + '" data-title="' + esc(title) + '" data-video="' + (isVideo ? "1" : "0") + '">' +
+              'Enregistrer dans Photos' +
+            '</button>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join("");
+  }
 
-  // ---------- Récupération payante (KKiaPay) ----------
-  document.getElementById("recover-btn").addEventListener("click", function(){
-    var btn = this;
-    fetch("/api/gallery/" + encodeURIComponent(token) + "/recover", { method: "POST", headers: authHeaders() })
-      .then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
-      .then(function(res){
-        if (res.status !== 200) throw new Error(res.data.error || "Récupération indisponible pour le moment.");
-        if (res.data.already_unlocked) { window.location.reload(); return; }
-        if (!window.openKkiapayWidget) throw new Error("Le module de paiement n'a pas pu se charger. Réessayez dans un instant.");
-        window.openKkiapayWidget({
-          amount: res.data.amount,
-          key: res.data.kkiapay.public_key,
-          sandbox: res.data.kkiapay.sandbox,
-          data: res.data.reference,
-          position: "center"
-        });
-        if (window.addSuccessListener) {
-          window.addSuccessListener(function(response){
-            confirmRecoveryPayment(response && response.transactionId, 0);
-          });
+  function loadGalleryContent() {
+    fetch("/api/gallery/" + encodeURIComponent(token))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          alert(data.error);
+          return;
         }
+        sessionData = data.session;
+        renderGallery(data.photos);
       })
-      .catch(function(e2){ alert(e2.message); });
-  });
-
-  function confirmRecoveryPayment(transactionId, attempt){
-    if (!transactionId) return;
-    document.getElementById("recover-btn").style.display = "none";
-    document.getElementById("recovery-verifying").style.display = "block";
-    document.getElementById("recovery-error").style.display = "none";
-
-    fetch("/api/gallery/" + encodeURIComponent(token) + "/kkiapay-confirm", {
-      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ transactionId: transactionId })
-    }).then(function(r){ return r.json().then(function(d){ return { status: r.status, data: d }; }); })
-      .then(function(res){
-        if (res.status === 200 && res.data.ok) {
-          window.location.reload(); // recharge la galerie avec l'accès HD débloqué
-        } else if (res.status === 202 && attempt < 8) {
-          setTimeout(function(){ confirmRecoveryPayment(transactionId, attempt + 1); }, 3000);
-        } else {
-          document.getElementById("recovery-verifying").style.display = "none";
-          var err = document.getElementById("recovery-error");
-          err.textContent = res.data.error || "Vérification impossible pour le moment. Réessayez dans un instant.";
-          err.style.display = "block";
-          document.getElementById("recover-btn").style.display = "inline-flex";
-        }
-      })
-      .catch(function(){
-        document.getElementById("recovery-verifying").style.display = "none";
-        var err = document.getElementById("recovery-error");
-        err.textContent = "Erreur réseau pendant la vérification.";
-        err.style.display = "block";
-        document.getElementById("recover-btn").style.display = "inline-flex";
+      .catch(function (err) {
+        console.error("Erreur chargement galerie :", err);
       });
   }
 
-  var nav = document.getElementById("nav");
-  document.addEventListener("scroll", function(){ if (window.scrollY > 40) nav.classList.add("scrolled"); }, { passive: true });
+  // ============================================================
+  // ÉVÉNEMENTS & DÉLÉGATION DU CLIC
+  // ============================================================
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!token) return;
+
+    // Attachement de la vérification PIN si présent
+    var pinForm = document.getElementById("pin-form");
+    if (pinForm) {
+      pinForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var pinInput = document.getElementById("pin-input");
+        var pinVal = pinInput ? pinInput.value.trim() : "";
+
+        fetch("/api/gallery/" + encodeURIComponent(token) + "/verify-pin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: pinVal })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res.error) {
+            alert(res.error);
+            return;
+          }
+          var pinView = document.getElementById("pin-view");
+          var galleryView = document.getElementById("gallery-main-view");
+          if (pinView) pinView.style.display = "none";
+          if (galleryView) galleryView.style.display = "block";
+          renderGallery(res.photos);
+        })
+        .catch(function (err) {
+          alert("Erreur de vérification PIN.");
+        });
+      });
+    }
+
+    // Délégation d'événement UNIQUE pour le bouton "Enregistrer dans Photos"
+    document.body.addEventListener("click", function (e) {
+      var btn = e.target.closest(".btn-dl-photo, [data-action='download-photo']");
+      if (!btn) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      var photoId = btn.dataset.id;
+      var title = btn.dataset.title;
+      var isVideo = btn.dataset.video === "1";
+
+      if (photoId) {
+        saveGalleryMedia(photoId, title, isVideo, btn);
+      }
+    });
+
+    // Chargement initial si pas de masque PIN requis
+    loadGalleryContent();
+  });
+
+  // Export global au besoin
+  window.saveGalleryMedia = saveGalleryMedia;
 })();
-</script>
-</body>
-</html>
