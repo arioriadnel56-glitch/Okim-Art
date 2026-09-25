@@ -4,16 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Galerie privée — OKIM ART</title>
+
+<!-- Icones avec chemins absolus (racine /) -->
 <link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
 <link rel="apple-touch-icon" href="/img/brand/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#141a30">
+
+<!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="css/shop.css">
-<link rel="stylesheet" href="css/okimbox.css">
+
+<!-- Feuilles de style avec chemins absolus (racine /) -->
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/css/shop.css">
+<link rel="stylesheet" href="/css/okimbox.css">
+
 <style>
   .gallery-pin-card {
     max-width: 420px;
@@ -99,14 +106,14 @@
 <body>
 
 <header class="nav scrolled" id="nav">
-  <a href="index.html" class="brand"><img src="img/brand/logo.png" alt="OKIM ART" class="brand-logo" id="brand-logo-img"> OKIM ART</a>
+  <a href="/index.html" class="brand"><img src="/img/brand/logo.png" alt="OKIM ART" class="brand-logo" id="brand-logo-img"> OKIM ART</a>
   <nav class="nav-links">
-    <a href="boutique.html">Boutique</a>
-    <a href="logiciels.html">Outils &amp; Logiciels</a>
-    <a href="index.html#contact">Contact</a>
+    <a href="/boutique.html">Boutique</a>
+    <a href="/logiciels.html">Outils &amp; Logiciels</a>
+    <a href="/index.html#contact">Contact</a>
   </nav>
   <div class="nav-right">
-    <a href="compte.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Mon espace client</a>
+    <a href="/compte.html" class="btn btn-ghost nav-cta" style="padding:.6rem 1.1rem">Mon espace client</a>
   </div>
 </header>
 
@@ -149,12 +156,13 @@
 </section>
 
 <footer>
-  <span class="f-brand"><img src="img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
-  <div class="f-socials"><a href="index.html#contact">Contact</a></div>
+  <span class="f-brand"><img src="/img/brand/logo.png" alt="" class="f-brand-logo">OKIM ART</span>
+  <div class="f-socials"><a href="/index.html#contact">Contact</a></div>
 </footer>
 
-<script src="js/gallery.js"></script>
-<script src="js/okimbox.js"></script>
+<!-- Scripts JavaScript avec chemins absolus (racine /) -->
+<script src="/js/gallery.js?v=2.1"></script>
+<script src="/js/okimbox.js?v=2.1"></script>
 <script src="/js/pwa-register.js"></script>
 </body>
 </html>
