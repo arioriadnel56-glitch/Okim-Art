@@ -26,6 +26,25 @@
     return api(path, { method, body: formData });
   }
 
+  function apiFormWithProgress(path, method, formData, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, "/api/admin" + path);
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      });
+      xhr.onload = () => {
+        if (xhr.status === 401) { window.location.href = "login.html"; return reject(new Error("Non authentifié")); }
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (e) { /* réponse vide ou non-JSON */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error((data && data.error) || "Erreur serveur (" + xhr.status + ")"));
+      };
+      xhr.onerror = () => reject(new Error("Connexion interrompue pendant l'envoi — vérifiez votre réseau et réessayez."));
+      xhr.send(formData);
+    });
+  }
+
   /* ================= GARDE D'AUTHENTIFICATION ================= */
   fetch("/api/auth/admin/me").then((r) => {
     if (!r.ok) { window.location.href = "login.html"; return; }
@@ -96,33 +115,34 @@
   /* ================= DASHBOARD ================= */
   async function loadDashboard() {
     const { stats, reset_at } = await api("/dashboard");
+    const st = stats || {};
     const cards = [
-      ["Photos publiées", stats.photos_publiees + " / " + stats.photos],
-      ["Produits en vente", stats.produits],
-      ["Commandes", stats.commandes],
-      ["En attente de paiement", stats.commandes_en_attente],
-      ["Chiffre d'affaires", money(stats.chiffre_affaires)],
-      ["Clients", stats.clients],
-      ["Formations actives", stats.formations],
-      ["Inscriptions formations", stats.inscriptions],
-      ["Messages non lus", stats.messages_non_lus],
-      ["Séances actives", stats.seances_actives],
-      ["Séances archivées", stats.seances_archivees],
-      ["Revenus récupération", money(stats.revenus_recuperation)],
-      ["Logiciels publiés", stats.logiciels_publies],
-      ["Licences actives", stats.licences_actives],
-      ["Licences expirées", stats.licences_expirees],
-      ["Formules vendues", stats.logiciels_vendus],
-      ["CA logiciels", money(stats.chiffre_affaires_logiciels)],
-      ["Téléchargements logiciels", stats.telechargements_logiciels],
-      ["Témoignages en attente", stats.temoignages_en_attente]
+      ["Photos publiées", (st.photos_publiees || 0) + " / " + (st.photos || 0)],
+      ["Produits en vente", st.produits || 0],
+      ["Commandes", st.commandes || 0],
+      ["En attente de paiement", st.commandes_en_attente || 0],
+      ["Chiffre d'affaires", money(st.chiffre_affaires)],
+      ["Clients", st.clients || 0],
+      ["Formations actives", st.formations || 0],
+      ["Inscriptions formations", st.inscriptions || 0],
+      ["Messages non lus", st.messages_non_lus || 0],
+      ["Séances actives", st.seances_actives || 0],
+      ["Séances archivées", st.seances_archivees || 0],
+      ["Revenus récupération", money(st.revenus_recuperation)],
+      ["Logiciels publiés", st.logiciels_publies || 0],
+      ["Licences actives", st.licences_actives || 0],
+      ["Licences expirées", st.licences_expirees || 0],
+      ["Formules vendues", st.logiciels_vendus || 0],
+      ["CA logiciels", money(st.chiffre_affaires_logiciels)],
+      ["Téléchargements logiciels", st.telechargements_logiciels || 0],
+      ["Témoignages en attente", st.temoignages_en_attente || 0]
     ];
     document.getElementById("stats-grid").innerHTML = cards.map(([label, val]) =>
       `<div class="admin-stat-card"><small>${esc(label)}</small><span>${esc(val)}</span></div>`
     ).join("");
-    document.getElementById("badge-orders").textContent = stats.commandes_en_attente;
-    document.getElementById("badge-messages").textContent = stats.messages_non_lus;
-    document.getElementById("badge-testimonials").textContent = stats.temoignages_en_attente;
+    document.getElementById("badge-orders").textContent = st.commandes_en_attente || 0;
+    document.getElementById("badge-messages").textContent = st.messages_non_lus || 0;
+    document.getElementById("badge-testimonials").textContent = st.temoignages_en_attente || 0;
     document.getElementById("dashboard-reset-info").textContent = reset_at
       ? "Compteurs à zéro depuis le " + dateFr(reset_at)
       : "Compteurs jamais réinitialisés (comptage depuis le début)";
@@ -142,8 +162,13 @@
     const previewWrap = document.getElementById(previewWrapId);
     const textEl = document.getElementById(textId);
     let currentFile = null;
+    let currentPreviewUrl = null;
 
     function showPreview(url, isVideo) {
+      if (currentPreviewUrl && currentPreviewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+      currentPreviewUrl = url;
       previewWrap.innerHTML = !url ? "" : isVideo
         ? `<video src="${esc(url)}" muted controls style="max-width:100%; max-height:160px; border-radius:8px; display:block; margin:0 auto .6rem"></video>`
         : `<img src="${esc(url)}" alt="Aperçu">`;
@@ -172,8 +197,6 @@
   const photoDZ = wireDropzone({ zoneId:"photo-dropzone", inputId:"photo-file", previewWrapId:"photo-preview-wrap", textId:"photo-dropzone-text", defaultText:"Cliquez ou glissez-déposez une image (JPG, PNG, WEBP)" });
   let categoriesCache = [];
 
-  // Bascule l'input/dropzone entre mode image et mode vidéo, et masque les
-  // réglages qui n'ont pas de sens pour une vidéo (prix, filigrane).
   function applyPhotoTypeUI() {
     const isVideo = document.getElementById("photo-type-video").checked;
     const input = document.getElementById("photo-file");
@@ -227,9 +250,6 @@
     const isVideo = !!(photo && photo.type === "video");
     document.getElementById("photo-type-video").checked = isVideo;
     document.getElementById("photo-type-photo").checked = !isVideo;
-    // Changer de type sur un élément existant obligerait à ré-uploader
-    // (les deux formats n'ont pas la même sécurité de stockage) : on
-    // verrouille le choix en modification, uniquement libre à la création.
     document.getElementById("photo-type-photo").disabled = !!photo;
     document.getElementById("photo-type-video").disabled = !!photo;
     applyPhotoTypeUI();
@@ -240,15 +260,7 @@
   document.getElementById("btn-new-photo").addEventListener("click", () => openPhotoPanel(null));
   document.getElementById("cancel-photo").addEventListener("click", () => document.getElementById("panel-photo").classList.remove("open"));
 
-  /* ================= UPLOAD DIRECT VIDÉO → CLOUDINARY =================
-     Utilisé uniquement pour le type "Vidéo courte" du portfolio : le fichier
-     ne passe JAMAIS par notre serveur Express (pas de FormData vers /api/admin/photos
-     avec le fichier lui-même). On récupère une signature côté serveur, puis on
-     POST directement à Cloudinary depuis le navigateur, avec suivi de progression
-     (XMLHttpRequest — fetch() ne donne pas d'évènement de progression d'upload). */
   async function getVideoUploadSignature() {
-    // Route hors du préfixe /api/admin (voir server.js) : on n'utilise donc
-    // pas le helper api() qui préfixe automatiquement par /api/admin.
     const res = await fetch("/api/signature/video");
     if (res.status === 401) { window.location.href = "login.html"; throw new Error("Non authentifié"); }
     if (!res.ok) {
@@ -256,16 +268,12 @@
       try { const data = await res.json(); if (data && data.error) msg = data.error; } catch (e) {}
       throw new Error(msg);
     }
-    return res.json(); // { signature, timestamp, apiKey, cloudName, folder }
+    return res.json();
   }
 
   function uploadVideoToCloudinary(file, { signature, timestamp, apiKey, cloudName, folder }, onProgress) {
     return new Promise((resolve, reject) => {
       const fd = new FormData();
-      // IMPORTANT : ces champs doivent correspondre EXACTEMENT à ce qui a
-      // été signé côté serveur (timestamp + folder) — voir routes/admin/signature.js.
-      // "file" doit être ajouté avant les autres champs signés pour Cloudinary,
-      // mais l'ordre n'a en réalité pas d'importance pour un FormData.
       fd.append("file", file);
       fd.append("api_key", apiKey);
       fd.append("timestamp", timestamp);
@@ -314,10 +322,6 @@
 
     try {
       let videoUrl = null;
-
-      // Vidéo + nouveau fichier sélectionné : upload direct vers Cloudinary
-      // AVANT d'appeler notre propre API — notre serveur ne reçoit ensuite
-      // que l'URL Cloudinary (video_url), jamais le fichier vidéo lui-même.
       if (isVideo && file) {
         submitBtn.textContent = "Préparation…";
         const sig = await getVideoUploadSignature();
@@ -337,10 +341,8 @@
       fd.append("watermark", document.getElementById("photo-watermark").checked ? "1" : "0");
 
       if (videoUrl) {
-        // Circuit Cloudinary : on envoie l'URL, jamais le fichier.
         fd.append("video_url", videoUrl);
       } else if (file) {
-        // Circuit classique (photo, filigrane/redimensionnement côté serveur).
         fd.append("file", file);
       }
 
@@ -771,10 +773,6 @@
     } catch (err) { alert(err.message); }
   });
 
-  // GeniusPay : en préparation, voir le commentaire du formulaire dans
-  // dashboard.html — seules les clés sont enregistrées pour l'instant, la
-  // case "Activer" reste désactivée tant que la route de paiement et la
-  // vérification du webhook n'ont pas été construites.
   async function loadGeniuspay() {
     const cfg = await api("/settings/geniuspay");
     document.getElementById("gp-sandbox").checked = cfg.sandbox;
@@ -803,8 +801,6 @@
       if (el) el.value = cfg[k] || "";
     });
     document.getElementById("n-smtp_secure").checked = cfg.smtp_secure;
-    // Le mot de passe SMTP n'est jamais renvoyé par l'API par sécurité ;
-    // on laisse le champ vide (il n'est mis à jour que si l'admin le retape).
   }
   document.getElementById("form-notify").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -847,8 +843,6 @@
     const status = document.getElementById("as-key-status");
     status.textContent = cfg.api_key_configured ? "Clé configurée" : "Aucune clé";
     status.className = "admin-tag " + (cfg.api_key_configured ? "ok" : "warn");
-    // La clé API n'est jamais renvoyée par l'API par sécurité ; le champ
-    // reste vide (elle n'est mise à jour que si l'admin en saisit une nouvelle).
   }
   document.getElementById("form-assistant").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -887,10 +881,6 @@
       document.getElementById("admin-email").value = admin.email;
       currentAdminRole = admin.role;
       if (admin.role !== "owner") {
-        // Compte "employé" (secretary) : Paramètres et Corbeille sont hors
-        // périmètre côté serveur (403 — voir requireSection/"systeme" et
-        // requireOwner) — on masque aussi ces boutons ici pour ne pas
-        // montrer des sections qui échoueraient de toute façon.
         const btnSettings = document.querySelector('#admin-nav button[data-section="settings"]');
         if (btnSettings) btnSettings.style.display = "none";
         const btnTrash = document.querySelector('#admin-nav button[data-section="trash"]');
@@ -933,7 +923,7 @@
   }
   async function loadAdmins() {
     const res = await fetch("/api/admin/admins");
-    if (!res.ok) return; // 403 si non-propriétaire : la section est de toute façon masquée
+    if (!res.ok) return;
     const { admins } = await res.json();
     const tbody = document.querySelector("#table-admins tbody");
     tbody.innerHTML = admins.map((a) => `
@@ -1022,24 +1012,30 @@
     const previewWrap = document.getElementById("session-preview-wrap");
     const textEl = document.getElementById("session-dropzone-text");
 
-    // Au-delà de ce nombre, on arrête de générer des vignettes d'aperçu :
-    // avec 300 fichiers, créer 300 <img>/<video> + object URLs d'un coup
-    // fait ramer (voire planter) le navigateur, surtout sur mobile — le
-    // compteur textuel suffit largement pour confirmer la sélection.
     const MAX_PREVIEW_THUMBS = 60;
+    let createdUrls = [];
+
     function render() {
+      createdUrls.forEach(url => URL.revokeObjectURL(url));
+      createdUrls = [];
+
       const toPreview = sessionFiles.slice(0, MAX_PREVIEW_THUMBS);
-      previewWrap.innerHTML = toPreview.map((f) => f.type.startsWith("video/")
-        ? `<video src="${URL.createObjectURL(f)}" muted></video>`
-        : `<img src="${URL.createObjectURL(f)}" alt="">`
-      ).join("") + (sessionFiles.length > MAX_PREVIEW_THUMBS
+      previewWrap.innerHTML = toPreview.map((f) => {
+        const url = URL.createObjectURL(f);
+        createdUrls.push(url);
+        return f.type.startsWith("video/")
+          ? `<video src="${url}" muted></video>`
+          : `<img src="${url}" alt="">`;
+      }).join("") + (sessionFiles.length > MAX_PREVIEW_THUMBS
         ? `<div class="session-preview-more">+${sessionFiles.length - MAX_PREVIEW_THUMBS}</div>` : "");
+
       const nbVideos = sessionFiles.filter((f) => f.type.startsWith("video/")).length;
       const nbPhotos = sessionFiles.length - nbVideos;
       textEl.textContent = sessionFiles.length
         ? `${nbPhotos} photo(s), ${nbVideos} vidéo(s) sélectionnée(s) — cliquez pour en ajouter d'autres`
         : "Cliquez ou glissez-déposez toutes les photos et vidéos de la séance (JPG, PNG, WEBP, MP4, WEBM, MOV)";
     }
+
     function addFiles(fileList) {
       sessionFiles = sessionFiles.concat(Array.from(fileList));
       render();
@@ -1053,41 +1049,17 @@
   }
   const sessionDZ = wireMultiDropzone();
 
-  // wa.me exige un numéro complet au format international (indicatif pays +
-  // numéro, chiffres uniquement, sans "+" ni espaces). Les numéros béninois
-  // sont généralement saisis localement (8 chiffres, ex. "97xxxxxx") sans
-  // l'indicatif 229 — on le rajoute automatiquement dans ce cas précis.
-  // Pour tout autre format (déjà avec indicatif, ou un numéro étranger), on
-  // se contente de retirer les caractères non numériques, sans rien deviner
-  // de plus.
   function normalizePhoneForWhatsapp(raw) {
     const digits = (raw || "").replace(/[^\d]/g, "");
     if (!digits) return null;
-    if (digits.length === 8) return "229" + digits; // numéro béninois local, sans indicatif
-    if (digits.startsWith("229") || digits.length > 8) return digits; // déjà avec indicatif (ou international)
-    return digits; // repli : au moins tenter avec ce qui a été saisi
+    if (digits.length === 8) return "229" + digits;
+    if (digits.startsWith("229") || digits.length > 8) return digits;
+    return digits;
   }
 
-  // Nombre de fichiers envoyés par requête. Une séance de 300 fichiers part
-  // donc en ~20 requêtes de 15 plutôt qu'une seule requête géante, qui
-  // faisait planter/timeout le serveur (Erreur serveur 502) et bloquait
-  // tout l'envoi. Chaque lot est petit et rapide, donc plus fiable sur une
-  // connexion mobile — et un lot qui échoue peut être rejoué sans perdre
-  // ceux déjà envoyés.
-  const SESSION_BATCH_SIZE = 15; // plafond en NOMBRE de fichiers par lot
-  // Plafond en POIDS total par lot. Indispensable dès qu'il y a des
-  // vidéos : 15 photos ne pèsent presque rien, mais 15 vidéos peuvent
-  // atteindre plusieurs Go d'un coup (jusqu'à 200 Mo/vidéo), ce qui
-  // reproduirait le plantage mémoire déjà corrigé pour les photos. On
-  // arrête un lot dès que l'UN des deux plafonds (nombre OU poids) est
-  // atteint — donc un lot de vidéos contiendra automatiquement moins de
-  // 15 fichiers si besoin.
-  const SESSION_BATCH_MAX_BYTES = 150 * 1024 * 1024; // 150 Mo par lot
+  const SESSION_BATCH_SIZE = 15;
+  const SESSION_BATCH_MAX_BYTES = 150 * 1024 * 1024;
 
-  // Construit le prochain lot à envoyer à partir d'une liste de fichiers
-  // restants, en respectant les deux plafonds ci-dessus. Toujours au moins
-  // 1 fichier par lot (même s'il dépasse à lui seul 150 Mo), pour ne
-  // jamais bloquer l'envoi d'une vidéo particulièrement lourde.
   function nextSessionBatch(files) {
     const batch = [];
     let bytes = 0;
@@ -1099,23 +1071,6 @@
     return batch;
   }
 
-  // Envoie une liste de fichiers vers une séance (nouvelle OU existante).
-  // Les PHOTOS passent par lots via notre serveur (elles ont besoin d'une
-  // version filigranée générée côté serveur, voir POST /:id/photos). Les
-  // VIDÉOS partent DIRECTEMENT de cet appareil vers Cloudinary (voir
-  // uploadSessionVideoDirect ci-dessous) — jamais par notre serveur, ce qui
-  // règle à la fois la lenteur et les échecs silencieux sur les grosses
-  // vidéos (auparavant, chaque vidéo était bufferisée en RAM par le
-  // serveur puis traitée séquentiellement, lent et sujet à timeout sur
-  // Render Free).
-  //
-  // Pour garder une reprise fiable par simple INDEX (alreadySent, un
-  // nombre) même avec un mélange photos/vidéos, on trie d'abord — toutes
-  // les photos, puis toutes les vidéos. Reprendre à l'index N retombe donc
-  // toujours exactement sur le même point, quel que soit l'ordre dans
-  // lequel l'admin a sélectionné ses fichiers.
-  // onProgress(sentCount, total, videoPct) est appelé avant chaque étape ;
-  // videoPct (0-100) n'est renseigné que pendant l'envoi direct d'une vidéo.
   async function uploadFilesToSession(sessionId, files, alreadySent, onProgress) {
     const isVideo = (f) => !!(f.type && f.type.startsWith("video/"));
     const ordered = files.slice().sort((a, b) => (isVideo(a) === isVideo(b)) ? 0 : (isVideo(a) ? 1 : -1));
@@ -1135,15 +1090,15 @@
         });
         sent += 1;
       } else {
-        // Regroupe uniquement la série de photos consécutives à partir
-        // d'ici (le tri garantit qu'elles précèdent toutes les vidéos).
         let end = sent;
         while (end < ordered.length && !isVideo(ordered[end])) end++;
         const batch = nextSessionBatch(ordered.slice(sent, end));
-        if (onProgress) onProgress(sent, ordered.length);
+        if (onProgress) onProgress(sent, ordered.length, 0);
         const fd = new FormData();
         batch.forEach((f) => fd.append("files", f));
-        await apiForm(`/sessions/${sessionId}/photos`, "POST", fd);
+        await apiFormWithProgress(`/sessions/${sessionId}/photos`, "POST", fd, (pct) => {
+          if (onProgress) onProgress(sent, ordered.length, pct);
+        });
         sent += batch.length;
       }
     }
@@ -1151,27 +1106,17 @@
     return sent;
   }
 
-  // Récupère l'autorisation d'upload direct pour UNE vidéo de séance
-  // (privée — voir GET /api/signature/session-video côté serveur). Route
-  // hors du préfixe /api/admin : on n'utilise donc pas le helper api().
   async function getSessionVideoSignature() {
     const res = await fetch("/api/signature/session-video");
     if (res.status === 401) { window.location.href = "login.html"; throw new Error("Non authentifié"); }
     if (!res.ok) {
       let msg = "Impossible d'obtenir l'autorisation d'upload vidéo.";
-      try { const data = await res.json(); if (data && data.error) msg = data.error; } catch (e) { /* réponse non-JSON */ }
+      try { const data = await res.json(); if (data && data.error) msg = data.error; } catch (e) {}
       throw new Error(msg);
     }
-    return res.json(); // { signature, timestamp, apiKey, cloudName, folder, type }
+    return res.json();
   }
 
-  // Envoie UNE vidéo de séance directement à Cloudinary (jamais à notre
-  // serveur). XMLHttpRequest plutôt que fetch() : c'est le seul des deux à
-  // exposer un évènement de progression sur l'ENVOI (fetch ne donne de
-  // progression qu'en RÉCEPTION). Le champ "type" DOIT être renvoyé tel
-  // quel si la signature l'incluait (cas des vidéos de séance, privées) —
-  // sinon Cloudinary recalcule une signature différente de celle reçue et
-  // rejette l'upload.
   function uploadSessionVideoDirect(file, sig, onProgress) {
     return new Promise((resolve, reject) => {
       const fd = new FormData();
@@ -1189,7 +1134,7 @@
       });
       xhr.onload = () => {
         let data = null;
-        try { data = JSON.parse(xhr.responseText); } catch (e) { /* réponse non-JSON */ }
+        try { data = JSON.parse(xhr.responseText); } catch (e) {}
         if (xhr.status >= 200 && xhr.status < 300 && data && data.public_id) resolve(data);
         else reject(new Error((data && data.error && data.error.message) || "Échec de l'envoi de la vidéo vers Cloudinary."));
       };
@@ -1198,10 +1143,6 @@
     });
   }
 
-  // Conserve l'état d'un envoi en cours (séance déjà créée, nombre de
-  // fichiers déjà envoyés) pour permettre une REPRISE si une requête
-  // échoue en cours de route (coupure réseau...), au lieu de forcer à
-  // tout recommencer depuis zéro et créer des séances en double.
   let activeSessionUpload = null;
 
   function resetSessionUploadState() {
@@ -1230,10 +1171,7 @@
     e.preventDefault();
     if (!sessionFiles.length) { alert("Sélectionnez au moins une photo pour cette séance."); return; }
     const btn = document.getElementById("session-submit-btn");
-    if (btn.disabled) return; // évite un double-clic qui relancerait une requête pendant que la précédente tourne encore
-    // Validé ICI, côté client, AVANT toute requête : si le nom manque, on ne
-    // crée pas de séance à moitié — évite aussi de dépendre uniquement du
-    // message d'erreur renvoyé par le serveur pour ce cas précis.
+    if (btn.disabled) return;
     const clientNameValue = document.getElementById("session-client-name").value.trim();
     if (!activeSessionUpload && !clientNameValue) {
       alert("Le nom du client est requis.");
@@ -1242,9 +1180,6 @@
     }
     btn.disabled = true;
     try {
-      // 1) Créer la séance UNE SEULE FOIS (métadonnées seules, sans
-      // fichiers) — si on reprend un envoi interrompu, la séance existe
-      // déjà et on passe directement à l'envoi des fichiers restants.
       if (!activeSessionUpload) {
         btn.textContent = "Création de la séance…";
         const fd = new FormData();
@@ -1256,9 +1191,6 @@
         if (price) fd.append("recovery_price", price);
 
         const r = await apiForm("/sessions", "POST", fd);
-        // Garde-fou : si la réponse du serveur est inattendue (pas de champ
-        // "session"), on échoue explicitement ICI plutôt que de laisser
-        // activeSessionUpload dans un état à moitié rempli.
         if (!r || !r.session || !r.session.id) {
           throw new Error("Réponse inattendue du serveur lors de la création de la séance.");
         }
@@ -1272,41 +1204,30 @@
         };
       }
 
-      // Garde-fou supplémentaire : ne devrait jamais se produire vu la
-      // logique ci-dessus, mais on préfère un message clair à un plantage
-      // "null is not an object" si jamais l'état venait à être incohérent.
       if (!activeSessionUpload) {
         throw new Error("La séance n'a pas pu être créée. Veuillez réessayer.");
       }
 
-      // 2) Envoyer les fichiers (photos par lots via le serveur, vidéos en
-      // direct vers Cloudinary), en reprenant là où un éventuel envoi
-      // précédent s'était arrêté.
-      await uploadFilesToSession(activeSessionUpload.sessionId, sessionFiles, activeSessionUpload.sentCount, (sent, total, videoPct) => {
+      await uploadFilesToSession(activeSessionUpload.sessionId, sessionFiles, activeSessionUpload.sentCount, (sent, total, pct) => {
         activeSessionUpload.sentCount = sent;
-        btn.textContent = videoPct != null
-          ? `Envoi vidéo… ${videoPct}% (${sent}/${sessionFiles.length})`
+        btn.textContent = pct != null
+          ? `Envoi… ${pct}% (${sent}/${sessionFiles.length})`
           : `Envoi… (${sent}/${sessionFiles.length})`;
       });
 
-      // 3) Tous les fichiers sont passés : afficher le lien + PIN.
       document.getElementById("form-session").style.display = "none";
       document.getElementById("session-created-panel").style.display = "block";
       document.getElementById("session-created-link").value = activeSessionUpload.link;
       document.getElementById("session-created-pin").value = activeSessionUpload.pin;
 
-      // Lien WhatsApp pré-rempli avec le lien de la galerie et le code PIN —
-      // "le premier code d'ouverture" : ce PIN n'est affiché qu'une seule
-      // fois (voir le commentaire du panneau), donc ce bouton n'a de sens
-      // qu'à cet instant précis, juste après la création de la séance.
+      sessionDZ.reset();
+
       const waBtn = document.getElementById("session-created-whatsapp");
       if (activeSessionUpload.phoneDigits) {
         const message = `Bonjour ${activeSessionUpload.clientName || ""},\n\nVoici l'accès à vos photos et vidéos OKIM ART :\n\n📷 Galerie : ${activeSessionUpload.link}\n🔑 Code PIN : ${activeSessionUpload.pin}\n\nCe code est personnel, merci de ne pas le partager.\n\nÀ bientôt !`;
         waBtn.href = "https://wa.me/" + activeSessionUpload.phoneDigits + "?text=" + encodeURIComponent(message);
         waBtn.style.display = "inline-flex";
       } else {
-        // Pas de numéro exploitable (champ vide ou format non reconnu) :
-        // le bouton reste caché plutôt que d'ouvrir WhatsApp sans destinataire.
         waBtn.style.display = "none";
       }
 
@@ -1315,15 +1236,12 @@
       resetSessionUploadState();
     } catch (err) {
       if (activeSessionUpload && typeof activeSessionUpload.sentCount === "number") {
-        // La séance existe déjà côté serveur avec activeSessionUpload.sentCount
-        // fichiers enregistrés : on NE la recrée PAS. Le bouton reste prêt à
-        // reprendre l'envoi exactement là où il s'est arrêté.
         alert(
           `${err.message}\n\n${activeSessionUpload.sentCount}/${sessionFiles.length} fichiers déjà envoyés et enregistrés.\nCliquez à nouveau sur le bouton pour reprendre l'envoi — rien ne sera renvoyé en double.`
         );
         btn.textContent = `Reprendre l'envoi (${activeSessionUpload.sentCount}/${sessionFiles.length})`;
       } else {
-        activeSessionUpload = null; // état incohérent éventuel → on repart d'une création propre au prochain clic
+        activeSessionUpload = null;
         alert(err.message);
         btn.textContent = "Créer la séance";
       }
@@ -1376,11 +1294,6 @@
     }));
   }
 
-  /* ---------- Panneau "Modifier" une séance existante ----------
-     Permet de corriger le nom/téléphone du client, ajuster le prix de
-     récupération ou la date d'expiration, voir d'un coup d'œil ce qui a
-     déjà été envoyé (aperçus), retirer un fichier précis, et en ajouter
-     d'autres — sans jamais devoir supprimer/recréer toute la séance. */
   let editingSessionId = null;
 
   async function openEditSessionPanel(id) {
@@ -1408,9 +1321,6 @@
       grid.innerHTML = '<p class="admin-muted">Aucune photo/vidéo dans cette séance.</p>';
       return;
     }
-    // Pour les vidéos : pas d'aperçu public (voir insertSessionFiles côté
-    // serveur — aucun filigrane vidéo n'est généré), donc une carte simple
-    // avec le titre plutôt qu'une vraie vignette.
     grid.innerHTML = photos.map((p) => `
       <figure class="admin-session-photo" data-photo-id="${p.id}">
         ${p.type === "video"
@@ -1426,7 +1336,7 @@
         try {
           await api(`/sessions/${editingSessionId}/photos/${btn.dataset.removePhoto}`, { method: "DELETE" });
           btn.closest("[data-photo-id]").remove();
-          await loadSessions(); // met à jour le compteur photos/vidéos affiché dans le tableau
+          await loadSessions();
           if (!grid.querySelector("[data-photo-id]")) grid.innerHTML = '<p class="admin-muted">Aucune photo/vidéo dans cette séance.</p>';
         } catch (err) {
           alert(err.message);
@@ -1465,9 +1375,6 @@
     }
   });
 
-  // Ajout de fichiers à une séance existante, directement depuis le
-  // panneau "Modifier" — réutilise uploadFilesToSession() (même fiabilité
-  // par lots que la création, voir plus haut) au lieu d'une logique séparée.
   document.getElementById("session-edit-add-trigger").addEventListener("click", () => {
     document.getElementById("session-edit-add-files").click();
   });
@@ -1478,9 +1385,9 @@
     const original = trigger.textContent;
     trigger.disabled = true;
     try {
-      await uploadFilesToSession(editingSessionId, files, 0, (sent, total, videoPct) => {
-        trigger.textContent = videoPct != null
-          ? `Envoi vidéo… ${videoPct}% (${sent}/${total})`
+      await uploadFilesToSession(editingSessionId, files, 0, (sent, total, pct) => {
+        trigger.textContent = pct != null
+          ? `Envoi… ${pct}% (${sent}/${total})`
           : `Envoi… (${sent}/${total})`;
       });
       const { photos } = await api("/sessions/" + editingSessionId);
@@ -1490,13 +1397,11 @@
       alert(err.message);
     } finally {
       trigger.disabled = false; trigger.textContent = original;
-      this.value = ""; // permet de resélectionner les mêmes fichiers si besoin (ex. après une erreur)
+      this.value = "";
     }
   });
   const sessionSearchInput = document.getElementById("session-search");
-  // Recherche insensible aux accents : sur un clavier de téléphone, on tape
-  // souvent "aicha" sans réfléchir à l'accent de "Aïcha" — sans cette
-  // normalisation, la recherche ne trouverait jamais ce genre de nom.
+
   function normalizeSearch(s) {
     return (s || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   }
@@ -1513,7 +1418,7 @@
 
   /* ================= LOGICIELS ================= */
   const swDZ = wireDropzone({ zoneId:"sw-dropzone", inputId:"sw-file", previewWrapId:"sw-preview-wrap", textId:"sw-dropzone-text", defaultText:"Image / logo affiché sur la carte — cliquez ou glissez-déposez" });
-  let currentSoftwareId = null; // id du PRODUIT (products.id), pas de software_products.id
+  let currentSoftwareId = null;
   const SW_PERIOD_LABEL = { unique:"Paiement unique", mensuel:"Mensuel", annuel:"Annuel" };
 
   async function loadSoftwareCategorySelect() {
@@ -1608,7 +1513,7 @@
     try {
       const { software: s } = await apiForm(id ? "/software/" + id : "/software", id ? "PUT" : "POST", fd);
       await loadSoftwareList(); await loadDashboard();
-      if (!id) openSoftwarePanel(s.id); // bascule en mode édition pour permettre l'ajout de formules/versions
+      if (!id) openSoftwarePanel(s.id);
     } catch (err) { alert(err.message); }
   });
 
@@ -1654,7 +1559,7 @@
         </td>
       </tr>`).join("") : `<tr><td colspan="7" class="admin-table-empty">Aucune formule — ce logiciel n'est pas encore achetable.</td></tr>`;
     tbody.querySelectorAll("[data-edit-plan]").forEach((b) => b.addEventListener("click", () => {
-      const p = plans.find((x) => x.id == b.dataset.editPlan);
+      const p = plans.find((x) => String(x.id) === String(b.dataset.editPlan));
       document.getElementById("swp-id").value = p.id;
       document.getElementById("swp-nom").value = p.nom;
       document.getElementById("swp-description").value = p.description || "";
@@ -1748,7 +1653,9 @@
     sel.innerHTML = `<option value="">— Aucune (licence libre) —</option>`;
     if (!softwareId) return;
     try {
-      const { software: s } = await api("/software/" + softwareForLicenseCache.find(x => x.software_id == softwareId).id);
+      const target = softwareForLicenseCache.find((x) => String(x.software_id) === String(softwareId));
+      if (!target) return;
+      const { software: s } = await api("/software/" + target.id);
       (s.plans || []).forEach((p) => { sel.innerHTML += `<option value="${p.id}">${esc(p.nom)} — ${money(p.prix)}</option>`; });
     } catch (e) { /* ignore */ }
   }
@@ -1817,8 +1724,6 @@
       await loadAdminProfile();
       await Promise.all([loadPhotos(), loadCategories(), loadServices(), loadFormations(), loadProducts(), loadOrders(), loadMessages(), loadTestimonials(), loadTrash(), loadSessions(), loadSettings(), loadKkiapay(), loadGeniuspay(), loadNotify(), loadAssistant(), loadAdmins(), loadSoftwareList(), loadLicenses()]);
       await loadSoftwareCategorySelect();
-      // Rafraîchit la cloche de notifications en tâche de fond, sans
-      // recharger toutes les autres sections (léger, appel unique).
       setInterval(() => loadAdminNotifications().catch(() => {}), 45000);
     } catch (err) {
       console.error(err);
