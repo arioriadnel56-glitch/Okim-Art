@@ -10,18 +10,33 @@
   var SESSION_KEY = "okimart_assistant_session";
   var HISTORY_KEY = "okimart_assistant_history";
 
-  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function esc(s) { 
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { 
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; 
+    }); 
+  }
 
   function getSessionId() {
     var id = localStorage.getItem(SESSION_KEY);
     return id || null;
   }
-  function setSessionId(id) { localStorage.setItem(SESSION_KEY, id); }
-  function loadHistory() {
-    try { return JSON.parse(sessionStorage.getItem(HISTORY_KEY)) || []; } catch (_) { return []; }
+  
+  function setSessionId(id) { 
+    if (id) localStorage.setItem(SESSION_KEY, id); 
   }
+  
+  function loadHistory() {
+    try { 
+      return JSON.parse(sessionStorage.getItem(HISTORY_KEY)) || []; 
+    } catch (_) { 
+      return []; 
+    }
+  }
+  
   function saveHistory(h) {
-    try { sessionStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(-30))); } catch (_) {}
+    try { 
+      sessionStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(-30))); 
+    } catch (_) {}
   }
 
   function buildWidget(cfg) {
@@ -65,6 +80,7 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
     }
+
     function addHandoffNote() {
       var div = document.createElement("div");
       div.className = "ob-msg handoff";
@@ -72,6 +88,7 @@
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+
     function showTyping() {
       var div = document.createElement("div");
       div.className = "ob-typing";
@@ -80,15 +97,18 @@
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+
     function hideTyping() {
       var t = document.getElementById("ob-typing");
       if (t) t.remove();
     }
 
-    // Restaure l'historique déjà affiché dans cette session d'onglet.
+    // Restaure l'historique déjà affiché dans cette session d'onglet
     var history = loadHistory();
     if (history.length) {
-      history.forEach(function (m) { addMessage(m.role === "user" ? "user" : "bot", m.text); });
+      history.forEach(function (m) { 
+        addMessage(m.role === "user" ? "user" : "bot", m.text); 
+      });
     } else if (cfg.intro) {
       addMessage("bot", cfg.intro);
       history.push({ role: "assistant", text: cfg.intro });
@@ -98,13 +118,16 @@
     function open() {
       win.classList.add("open");
       launcher.classList.add("open");
-      launcher.querySelector(".ob-dot").style.display = "none";
+      var dot = launcher.querySelector(".ob-dot");
+      if (dot) dot.style.display = "none";
       setTimeout(function () { input.focus(); }, 150);
     }
+
     function close() {
       win.classList.remove("open");
       launcher.classList.remove("open");
     }
+
     launcher.addEventListener("click", function () {
       win.classList.contains("open") ? close() : open();
     });
@@ -114,6 +137,7 @@
       if (sending) return;
       var text = input.value.trim();
       if (!text) return;
+      
       input.value = "";
       addMessage("user", text);
       history.push({ role: "user", text: text });
@@ -127,34 +151,51 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: getSessionId(), message: text })
-      }).then(function (r) { return r.json().then(function (d) { return { status: r.status, data: d }; }); })
-        .then(function (res) {
-          hideTyping();
-          if (res.status !== 200) {
-            addMessage("system", res.data.error || "L'assistant est momentanément indisponible.");
-            return;
-          }
+      })
+      .then(function (r) { 
+        return r.json().then(function (d) { return { status: r.status, data: d }; }); 
+      })
+      .then(function (res) {
+        hideTyping();
+        if (res.status !== 200) {
+          addMessage("system", res.data.error || "L'assistant est momentanément indisponible.");
+          return;
+        }
+        if (res.data.session_id) {
           setSessionId(res.data.session_id);
-          addMessage("bot", res.data.reply);
-          history.push({ role: "assistant", text: res.data.reply });
-          saveHistory(history);
-          if (res.data.needs_human) addHandoffNote();
-        })
-        .catch(function () {
-          hideTyping();
-          addMessage("system", "Connexion impossible. Vérifiez votre connexion internet et réessayez.");
-        })
-        .finally(function () {
-          sending = false;
-          input.disabled = false;
-          input.focus();
-        });
+        }
+        addMessage("bot", res.data.reply);
+        history.push({ role: "assistant", text: res.data.reply });
+        saveHistory(history);
+        if (res.data.needs_human) addHandoffNote();
+      })
+      .catch(function () {
+        hideTyping();
+        addMessage("system", "Connexion impossible. Vérifiez votre connexion internet et réessayez.");
+      })
+      .finally(function () {
+        sending = false;
+        input.disabled = false;
+        input.focus();
+      });
     });
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
-    fetch("/api/assistant/config").then(function (r) { return r.json(); }).then(function (cfg) {
-      if (cfg && cfg.enabled) buildWidget(cfg);
-    }).catch(function () { /* assistant indisponible : le widget ne s'affiche simplement pas */ });
-  });
+  function init() {
+    fetch("/api/assistant/config")
+      .then(function (r) { return r.json(); })
+      .then(function (cfg) {
+        if (cfg && cfg.enabled) buildWidget(cfg);
+      })
+      .catch(function () {
+        /* assistant indisponible : le widget ne s'affiche simplement pas */
+      });
+  }
+
+  // Vérifie si le DOM est déjà prêt avant d'attendre l'événement DOMContentLoaded
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    init();
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
 })();
