@@ -1,28 +1,16 @@
 // ============================================================
 // db.js — connexion PostgreSQL + schéma complet + amorçage initial
 // ============================================================
-// Migré depuis SQLite (node:sqlite) vers PostgreSQL, pour un déploiement
-// sur des plateformes sans disque persistant garanti (Render, Vercel...).
-//
-// Compatibilité : afin de ne pas réécrire chaque requête SQL une par une,
-// `db.prepare(sql).get/all/run(...)` reproduit l'API synchrone utilisée
-// partout dans le code existant, mais en version ASYNCHRONE (chaque appel
-// renvoie une Promise — tous les appelants ont été mis à jour avec
-// async/await). Les placeholders `?` (syntaxe SQLite) sont convertis
-// automatiquement en `$1, $2, ...` (syntaxe PostgreSQL), et un
-// `RETURNING id` est ajouté automatiquement aux INSERT qui n'en ont pas
-// déjà un, pour émuler `lastInsertRowid` de better-sqlite3/node:sqlite.
 const { Pool, types } = require("pg");
 const bcrypt = require("bcryptjs");
 const { nanoid } = require("nanoid");
 
-// PostgreSQL renvoie les BIGINT (ex. COUNT(*), SUM(colonne_integer)) sous
-// forme de chaîne de caractères par défaut, pour éviter les pertes de
-// précision au-delà de Number.MAX_SAFE_INTEGER. Tout le code existant
-// compare ces valeurs à des nombres (`if (count > 0)`, `n === 0`...) : on
-// les fait donc analyser comme des nombres JS classiques (largement
-// suffisant vu les volumes réels de cette plateforme).
-types.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10)));
+// Convertit les BIGINT PostgreSQL (OID 20) en Number JavaScript
+types.setTypeParser(20, (val) => {
+  if (val === null) return null;
+  const parsed = parseInt(val, 10);
+  return Number.isNaN(parsed) ? val : parsed;
+});
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -31,18 +19,16 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// SSL : activé par défaut (obligatoire sur Render/la plupart des hébergeurs
-// PostgreSQL managés, qui utilisent des certificats non vérifiables
-// simplement). Mettre PGSSL=false pour une base Postgres locale (Docker...)
-// qui n'expose pas de TLS.
+// Configuration SSL adaptée aux environnements managés (Render, Supabase, Neon...)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.PGSSL === "false" ? false : { rejectUnauthorized: false }
+  ssl: process.env.PGSSL === "false" ? false : { rejectUnauthorized: false },
+  max: 15, // Limite raisonnable pour éviter la saturation sous charge
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000
 });
 
 pool.on("error", (err) => {
-  // Erreur sur une connexion inactive du pool (ex. coupure réseau) : ne
-  // doit jamais faire planter tout le process.
   console.error("[db] Erreur inattendue sur le pool PostgreSQL :", err.message);
 });
 
@@ -54,8 +40,6 @@ function convertPlaceholders(sql) {
   return sql.replace(/\?/g, () => `$${++i}`);
 }
 
-// Tables sans colonne "id" (clé primaire = "cle") : ne jamais leur ajouter
-// RETURNING id, ça ferait échouer la requête.
 const NO_ID_TABLES = new Set(["settings", "secure_settings"]);
 
 function needsReturningId(sql) {
@@ -87,7 +71,7 @@ function createDbInterface(queryable) {
       },
       async run(...params) {
         const { rows, rowCount } = await exec(params);
-        return { changes: rowCount, lastInsertRowid: rows[0] ? rows[0].id : undefined };
+        return { changes: rowCount, lastInsertRowid: rows && rows[0] ? rows[0].id : undefined };
       }
     };
   }
@@ -100,10 +84,7 @@ function createDbInterface(queryable) {
 const db = createDbInterface(pool);
 
 /**
- * Remplaçant async de db.transaction() (spécifique à better-sqlite3) :
- * exécute `fn(txDb)` (txDb ayant la même API que `db`, mais liée à une
- * connexion dédiée) entre BEGIN/COMMIT, avec ROLLBACK automatique en cas
- * d'erreur. `fn` peut être async.
+ * Exécute une série d'opérations dans une transaction SQL
  */
 async function transaction(fn) {
   const client = await pool.connect();
@@ -122,13 +103,8 @@ async function transaction(fn) {
 }
 
 // ---------------------------------------------------------------
-// Schéma (équivalent PostgreSQL du schéma SQLite d'origine)
+// Schéma PostgreSQL
 // ---------------------------------------------------------------
-// Note sur les colonnes de date : conservées en TEXT (et non TIMESTAMP),
-// au format "YYYY-MM-DD HH:MI:SS" identique à celui produit par le
-// `datetime('now')` de SQLite. Tout le code applicatif (comparaisons de
-// chaînes, `.split(" ")`, `new Date(...).toISOString()` stocké tel quel...)
-// continue donc de fonctionner sans aucun changement.
 const NOW_EXPR = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')`;
 
 const SCHEMA_SQL = `
@@ -330,13 +306,6 @@ CREATE TABLE IF NOT EXISTS recovery_transactions (
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 
--- ================================================================
--- MODULE "Outils & Logiciels" — marketplace de produits numériques
--- ================================================================
--- Réutilise volontairement la table "products" existante (un logiciel EST
--- un product, avec type='logiciel') pour hériter gratuitement du panier,
--- des commandes, des order_items et de markOrderPaid déjà en place —
--- "software_products" n'ajoute que les champs propres aux logiciels.
 CREATE TABLE IF NOT EXISTS software_products (
   id SERIAL PRIMARY KEY,
   product_id INTEGER NOT NULL UNIQUE REFERENCES products(id) ON DELETE CASCADE,
@@ -344,31 +313,31 @@ CREATE TABLE IF NOT EXISTS software_products (
   description_longue TEXT DEFAULT '',
   probleme_resolu TEXT DEFAULT '',
   public_cible TEXT DEFAULT '',
-  plateforme TEXT DEFAULT '',           -- ex. "Web, Windows, macOS"
+  plateforme TEXT DEFAULT '',
   systeme_compatible TEXT DEFAULT '',
   version_actuelle TEXT DEFAULT '',
   taille TEXT DEFAULT '',
   configuration_min TEXT DEFAULT '',
-  licence_type TEXT DEFAULT '',         -- ex. "Perpétuelle", "Abonnement"
+  licence_type TEXT DEFAULT '',
   demo_url TEXT DEFAULT '',
   video_url TEXT DEFAULT '',
-  captures TEXT NOT NULL DEFAULT '[]',  -- JSON: tableau d'URLs de captures d'écran
-  badge TEXT DEFAULT '',                -- 'nouveau' | 'populaire' | 'promotion' | ''
-  popularite INTEGER NOT NULL DEFAULT 0, -- compteur simple (ventes), pour tri "populaire"
+  captures TEXT NOT NULL DEFAULT '[]',
+  badge TEXT DEFAULT '',
+  popularite INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 
 CREATE TABLE IF NOT EXISTS software_plans (
   id SERIAL PRIMARY KEY,
   software_id INTEGER NOT NULL REFERENCES software_products(id) ON DELETE CASCADE,
-  nom TEXT NOT NULL,                    -- "Basic", "Pro", "Business"...
+  nom TEXT NOT NULL,
   description TEXT DEFAULT '',
   prix INTEGER NOT NULL,
-  periodicite TEXT NOT NULL DEFAULT 'unique', -- unique | mensuel | annuel
-  fonctionnalites TEXT NOT NULL DEFAULT '[]', -- JSON: tableau de chaînes
+  periodicite TEXT NOT NULL DEFAULT 'unique',
+  fonctionnalites TEXT NOT NULL DEFAULT '[]',
   max_devices INTEGER NOT NULL DEFAULT 1,
   max_users INTEGER NOT NULL DEFAULT 1,
-  statut TEXT NOT NULL DEFAULT 'actif', -- actif | inactif
+  statut TEXT NOT NULL DEFAULT 'actif',
   ordre INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
@@ -377,11 +346,11 @@ CREATE TABLE IF NOT EXISTS software_versions (
   id SERIAL PRIMARY KEY,
   software_id INTEGER NOT NULL REFERENCES software_products(id) ON DELETE CASCADE,
   version TEXT NOT NULL,
-  notes TEXT DEFAULT '',                -- notes de version / changelog
-  fichier TEXT NOT NULL,                -- chemin privé (jamais public), voir uploads/private/software
+  notes TEXT DEFAULT '',
+  fichier TEXT NOT NULL,
   taille_octets INTEGER,
   compatibilite TEXT DEFAULT '',
-  type_maj TEXT NOT NULL DEFAULT 'mineure', -- majeure | mineure | correctif
+  type_maj TEXT NOT NULL DEFAULT 'mineure',
   published_at TEXT NOT NULL DEFAULT ${NOW_EXPR},
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
@@ -394,11 +363,11 @@ CREATE TABLE IF NOT EXISTS licenses (
   client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
   order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
   order_item_id INTEGER REFERENCES order_items(id) ON DELETE SET NULL,
-  status TEXT NOT NULL DEFAULT 'active', -- active | expiree | suspendue | annulee
+  status TEXT NOT NULL DEFAULT 'active',
   max_devices INTEGER NOT NULL DEFAULT 1,
   max_users INTEGER NOT NULL DEFAULT 1,
   activated_at TEXT NOT NULL DEFAULT ${NOW_EXPR},
-  expires_at TEXT,                       -- NULL = licence permanente
+  expires_at TEXT,
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 
@@ -410,26 +379,17 @@ CREATE TABLE IF NOT EXISTS software_downloads (
   downloaded_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 
--- ================================================================
--- Témoignages clients (section "À propos" du site public)
--- ================================================================
 CREATE TABLE IF NOT EXISTS testimonials (
   id SERIAL PRIMARY KEY,
   client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
   nom TEXT NOT NULL,
   texte TEXT NOT NULL,
   note INTEGER NOT NULL DEFAULT 5,
-  -- en_attente : soumis par le client, pas encore vu par un admin
-  -- publie     : visible publiquement sur le site
-  -- rejete     : refusé par un admin, jamais affiché publiquement
   statut TEXT NOT NULL DEFAULT 'en_attente',
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR},
   updated_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 
--- ================================================================
--- Réinitialisation de mot de passe (espace client)
--- ================================================================
 CREATE TABLE IF NOT EXISTS password_resets (
   id SERIAL PRIMARY KEY,
   client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
@@ -439,18 +399,10 @@ CREATE TABLE IF NOT EXISTS password_resets (
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 
--- ================================================================
--- Assistant IA public "okim.box"
--- ================================================================
 CREATE TABLE IF NOT EXISTS assistant_conversations (
   id SERIAL PRIMARY KEY,
-  -- Identifiant anonyme côté navigateur (pas de compte requis pour discuter) ;
-  -- rattaché à un client seulement s'il est connecté au moment du message.
   session_id TEXT NOT NULL UNIQUE,
   client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
-  -- Passé à 1 quand l'IA elle-même juge ne pas pouvoir répondre (voir
-  -- server/utils/assistant.js) : un message est alors créé automatiquement
-  -- dans la table "messages" et l'admin est notifié comme pour un contact classique.
   needs_human INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR},
   updated_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
@@ -459,25 +411,20 @@ CREATE TABLE IF NOT EXISTS assistant_conversations (
 CREATE TABLE IF NOT EXISTS assistant_messages (
   id SERIAL PRIMARY KEY,
   conversation_id INTEGER NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
-  role TEXT NOT NULL, -- 'user' | 'assistant'
+  role TEXT NOT NULL,
   contenu TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
 CREATE INDEX IF NOT EXISTS idx_assistant_messages_conv ON assistant_messages(conversation_id, created_at);
 
--- ================================================================
--- Notifications in-app (admin ET client)
--- ================================================================
 CREATE TABLE IF NOT EXISTS notifications (
   id SERIAL PRIMARY KEY,
-  audience TEXT NOT NULL, -- 'admin' | 'client'
-  -- NULL pour une notification admin (visible par tous les admins) ;
-  -- renseigné pour une notification destinée à UN client précis.
+  audience TEXT NOT NULL,
   client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
   type TEXT NOT NULL,
   titre TEXT NOT NULL,
   corps TEXT DEFAULT '',
-  lien TEXT DEFAULT '', -- chemin relatif à ouvrir au clic (espace admin ou client)
+  lien TEXT DEFAULT '',
   lu INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
 );
@@ -486,84 +433,44 @@ CREATE INDEX IF NOT EXISTS idx_notifications_client ON notifications(client_id, 
 `;
 
 // ---------------------------------------------------------------
-// Migrations légères (colonnes ajoutées après coup à des tables déjà
-// existantes en production — ne recrée jamais une table, n'efface rien).
+// Migrations sécurisées
 // ---------------------------------------------------------------
-async function ensureColumn(table, column, addColumnSql) {
+async function ensureColumn(table, column, typeDef) {
   const { rows } = await pool.query(
     `SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
-    [table, column]
+    [table.toLowerCase(), column.toLowerCase()]
   );
   if (rows.length === 0) {
-    await pool.query(`ALTER TABLE ${table} ADD COLUMN ${addColumnSql}`);
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeDef}`);
   }
 }
+
 async function runMigrations() {
-  // "products" existait déjà avant le module Logiciels : tous les produits
-  // déjà en base sont donc explicitement des photos (comportement inchangé).
-  await ensureColumn("products", "type", "type TEXT NOT NULL DEFAULT 'photo'");
-  // Un article de commande peut désormais référencer la formule (plan)
-  // choisie pour un logiciel — NULL pour tout ce qui existait avant.
-  await ensureColumn("order_items", "plan_id", "plan_id INTEGER REFERENCES software_plans(id)");
-
-  // Portfolio : une entrée peut désormais être une courte vidéo plutôt
-  // qu'une photo. Tout ce qui existe déjà en base reste explicitement 'photo'.
-  await ensureColumn("photos", "type", "type TEXT NOT NULL DEFAULT 'photo'");
-
-  // Galerie client : une séance peut désormais contenir des vidéos. Pas de
-  // filigrane possible sur une vidéo (pas de traitement vidéo côté serveur) :
-  // watermark_path devient nullable — NULL pour une vidéo = "aperçu verrouillé"
-  // côté client tant que l'accès HD n'est pas débloqué (voir routes/gallery.js).
-  await ensureColumn("session_photos", "type", "type TEXT NOT NULL DEFAULT 'photo'");
+  await ensureColumn("products", "type", "TEXT NOT NULL DEFAULT 'photo'");
+  await ensureColumn("order_items", "plan_id", "INTEGER REFERENCES software_plans(id)");
+  await ensureColumn("photos", "type", "TEXT NOT NULL DEFAULT 'photo'");
+  await ensureColumn("session_photos", "type", "TEXT NOT NULL DEFAULT 'photo'");
+  
   await pool.query(`ALTER TABLE session_photos ALTER COLUMN watermark_path DROP NOT NULL`);
 
-  // CORRECTIF DE DONNÉES : la ligne ci-dessus ajoute "type" avec
-  // DEFAULT 'photo' — au moment de cette migration, TOUTES les lignes déjà
-  // en base (y compris de vraies vidéos uploadées avant l'existence de cette
-  // colonne) ont donc été rétroactivement étiquetées 'photo', quel que soit
-  // leur contenu réel. Conséquence concrète : le bouton "Télécharger le ZIP"
-  // et le téléchargement individuel se fiaient à cette colonne pour choisir
-  // l'extension du fichier (.mp4 vs .jpg) — une vraie vidéo mal étiquetée se
-  // retrouvait donc systématiquement renommée ".jpg", illisible une fois
-  // téléchargée. On corrige ici les lignes dont la référence Cloudinary dit
-  // clairement "video" mais dont la colonne affirme autre chose — la
-  // référence est la source de vérité (fixée à l'upload, jamais sujette à
-  // une valeur par défaut de colonne).
   await pool.query(`UPDATE session_photos SET type = 'video' WHERE file_path LIKE 'cloudinary:video:%' AND type <> 'video'`);
   await pool.query(`UPDATE session_photos SET type = 'photo' WHERE file_path LIKE 'cloudinary:image:%' AND type <> 'photo'`);
 
-  // Notification "licence bientôt expirée" envoyée une seule fois par licence.
-  await ensureColumn("licenses", "expiry_notified", "expiry_notified INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("licenses", "expiry_notified", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("photos", "video_url", "TEXT");
 
-  // Upload direct signé vers Cloudinary (vidéos lourdes) : l'URL Cloudinary
-  // finale est stockée telle quelle, sans jamais transiter par le buffer
-  // mémoire d'Express — voir routes/admin/signature.js. NULL = pas de vidéo
-  // externe (comportement inchangé pour tout ce qui existe déjà en base).
-  await ensureColumn("photos", "video_url", "video_url TEXT");
-
-  // FAILLE CORRIGÉE (rejeu de transaction KKiaPay) : rien ne liait un
-  // transaction_id KKiaPay à UNE commande précise. /orders/:id/kkiapay-confirm
-  // ne vérifiait que "le montant correspond" — un client pouvait donc payer
-  // une commande de 5 000 FCFA une seule fois, puis rejouer ce même
-  // transactionId (déjà "success" en base) sur n'importe quelle AUTRE
-  // commande de 5 000 FCFA pour la débloquer gratuitement (téléchargements,
-  // licences...), sans jamais repayer. L'index UNIQUE ci-dessous empêche
-  // qu'un même transactionId soit rattaché à deux commandes différentes —
-  // voir routes/kkiapay.js pour la vérification applicative associée.
-  await ensureColumn("orders", "kkiapay_transaction_id", "kkiapay_transaction_id TEXT");
+  await ensureColumn("orders", "kkiapay_transaction_id", "TEXT");
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_kkiapay_transaction_id
     ON orders(kkiapay_transaction_id) WHERE kkiapay_transaction_id IS NOT NULL
   `);
 
-  // Trace d'acceptation de la licence d'utilisation à l'inscription (preuve
-  // de consentement, utile en cas de litige) — NULL pour les comptes créés
-  // avant l'ajout de cette exigence.
-  await ensureColumn("clients", "licence_acceptee_at", "licence_acceptee_at TEXT");
+  await ensureColumn("clients", "licence_acceptee_at", "TEXT");
+  await ensureColumn("sessions_photo", "client_id", "INTEGER REFERENCES clients(id) ON DELETE SET NULL");
 }
 
 // ---------------------------------------------------------------
-// Amorçage (catégories / réglages / secret webhook / rôle owner)
+// Amorçage des données par défaut
 // ---------------------------------------------------------------
 async function seedDefaults() {
   const defaultCategories = [
@@ -608,6 +515,7 @@ async function seedDefaults() {
     assistant_name: "okim.box",
     assistant_intro: "Bonjour, je suis okim.box 👋 Posez-moi vos questions sur nos prestations, la boutique ou vos rendez-vous."
   };
+
   for (const [k, v] of Object.entries(defaultSettings)) {
     await db.prepare("INSERT INTO settings (cle, valeur) VALUES (?,?) ON CONFLICT (cle) DO NOTHING").run(k, v);
   }
@@ -618,7 +526,6 @@ async function seedDefaults() {
   }
 }
 
-/** À appeler une fois au démarrage, avant d'accepter des requêtes HTTP. */
 async function initDb() {
   await pool.query(SCHEMA_SQL);
   await runMigrations();
@@ -629,30 +536,33 @@ async function getSecureSetting(cle) {
   const row = await db.prepare("SELECT valeur FROM secure_settings WHERE cle = ?").get(cle);
   return row ? row.valeur : "";
 }
+
 async function setSecureSetting(cle, valeur) {
   await db.prepare("INSERT INTO secure_settings (cle, valeur) VALUES (?,?) ON CONFLICT (cle) DO UPDATE SET valeur = excluded.valeur").run(cle, valeur);
 }
 
-// ---- Compte administrateur ----
-// Si aucun admin n'existe, on en crée un avec un mot de passe généré,
-// affiché UNE SEULE FOIS dans la console au démarrage (voir server.js).
+// ---------------------------------------------------------------
+// Compte Administrateur Initial
+// ---------------------------------------------------------------
 async function ensureFirstAdmin() {
-  // Migration de compatibilité : si une base existante a déjà un ou
-  // plusieurs comptes admin mais aucun "owner", on promeut automatiquement
-  // le tout premier compte créé.
-  const hasOwner = (await db.prepare("SELECT COUNT(*) n FROM admins WHERE role = 'owner'").get()).n > 0;
-  if (!hasOwner) {
-    const oldest = await db.prepare("SELECT id FROM admins ORDER BY id ASC LIMIT 1").get();
-    if (oldest) await db.prepare("UPDATE admins SET role = 'owner' WHERE id = ?").run(oldest.id);
+  const count = (await db.prepare("SELECT COUNT(*) n FROM admins").get()).n;
+  
+  if (count > 0) {
+    const hasOwner = (await db.prepare("SELECT COUNT(*) n FROM admins WHERE role = 'owner'").get()).n > 0;
+    if (!hasOwner) {
+      const oldest = await db.prepare("SELECT id FROM admins ORDER BY id ASC LIMIT 1").get();
+      if (oldest) await db.prepare("UPDATE admins SET role = 'owner' WHERE id = ?").run(oldest.id);
+    }
+    return null;
   }
 
-  const count = (await db.prepare("SELECT COUNT(*) n FROM admins").get()).n;
-  if (count > 0) return null;
   const email = process.env.FIRST_ADMIN_EMAIL || "admin@okimart.studio";
   const rawPassword = process.env.FIRST_ADMIN_PASSWORD || nanoid(12);
   const hash = bcrypt.hashSync(rawPassword, 12);
+  
   await db.prepare("INSERT INTO admins (nom, email, password_hash, role) VALUES (?,?,?,?)")
     .run("Marcellino Kouati", email, hash, "owner");
+    
   return { email, rawPassword };
 }
 
