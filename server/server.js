@@ -42,6 +42,10 @@ const adminSignature = require("./routes/admin/signature");
 const seoRoutes = require("./routes/seo");
 
 const app = express();
+
+// 👉 Configuration indispensable pour Render (proxy inverse et rate limit)
+app.set("trust proxy", 1);
+
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
@@ -192,6 +196,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Échec du démarrage du serveur (connexion à la base de données ?) :", err);
+  console.error("[Erreur critique au démarrage]", err);
   process.exit(1);
 });
