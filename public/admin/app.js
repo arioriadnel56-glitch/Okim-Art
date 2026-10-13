@@ -1400,18 +1400,23 @@
       this.value = "";
     }
   });
+
   const sessionSearchInput = document.getElementById("session-search");
 
   function normalizeSearch(s) {
     return (s || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   }
+
   if (sessionSearchInput) {
     sessionSearchInput.addEventListener("input", () => {
       const q = normalizeSearch(sessionSearchInput.value.trim());
-      if (!q) { renderSessions(sessionsCache); return; }
+      if (!q) { 
+        renderSessions(sessionsCache); 
+        return; 
+      }
       renderSessions(sessionsCache.filter((s) =>
-        normalizeSearch(s.client_name).includes(q) ||
-        normalizeSearch(s.client_phone).includes(q)
+        normalizeSearch(s.client_name).includes(q) || 
+        (s.client_phone && normalizeSearch(s.client_phone).includes(q))
       ));
     });
   }
