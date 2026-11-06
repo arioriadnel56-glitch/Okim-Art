@@ -17,7 +17,9 @@ async function getSiteUrl() {
 async function downloadEmailHtml(order, tokens, licenses = []) {
   const siteUrl = await getSiteUrl();
   const links = tokens.map((t) => {
-    const url = siteUrl ? `${siteUrl}/api/download/${t.token}` : `/api/download/${t.token}`;
+    // Page statique intermédiaire : réveille le serveur avec l'animation OKIM ART, puis lance le
+    // téléchargement — le client ne tombe jamais sur l'écran d'attente de l'hébergeur depuis un e-mail.
+    const url = siteUrl ? `${siteUrl}/telecharger.html?t=${encodeURIComponent(t.token)}` : `/telecharger.html?t=${encodeURIComponent(t.token)}`;
     return `<li style="margin-bottom:8px"><strong>${t.titre}</strong> — <a href="${url}">Télécharger</a></li>`;
   }).join("");
   const licenseLines = licenses.map((l) =>
