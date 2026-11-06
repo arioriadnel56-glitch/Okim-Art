@@ -130,6 +130,37 @@
     }
   }
 
+  /* Envoi d'un formulaire public : enregistré localement, envoyé avec clé d'idempotence (jamais en double),
+     repris automatiquement si le serveur dort ou si la connexion tombe. Ne renvoie des données
+     (= succès) QUE si le serveur a confirmé ; sinon null + message "en attente" honnête. */
+  async function sendForm(kind, label, url, body, form, okEl, errEl) {
+    const submitBtn = form.querySelector("[type=submit]");
+    if (submitBtn) submitBtn.disabled = true;
+    const noticeAnchor = okEl || form;
+    try {
+      if (!window.OkimApi) { // repli : comportement d'origine
+        const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Échec de l'envoi.");
+        return d;
+      }
+      OkimApi.ui.clearNotice(noticeAnchor);
+      const r = await OkimApi.submit({ kind: kind, label: label, url: url, body: body });
+      if (r.synced) return r.data || { ok: true };
+      if (r.rejected) throw new Error(r.message || "Envoi refusé.");
+      if (r.queued) {
+        OkimApi.ui.notice(noticeAnchor, r.offline
+          ? "Vous êtes hors connexion. Votre demande est conservée sur cet appareil et sera envoyée automatiquement dès le retour du réseau — elle n'est pas encore transmise."
+          : "Le serveur met un peu de temps à répondre. Votre demande est conservée et sera renvoyée automatiquement — elle n'est pas encore confirmée.");
+        form.reset();
+        return null;
+      }
+      throw new Error("Envoi impossible pour le moment. Vos informations sont conservées, réessayez dans un instant.");
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  }
+
   /* ---------------- FORMULAIRE DE CONTACT ---------------- */
   function wireContactForm() {
     const form = document.getElementById("contact-form");
@@ -147,11 +178,8 @@
         message: document.getElementById("contact-message").value
       };
       try {
-        const r = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || "Échec de l'envoi.");
-        ok.classList.add("show");
-        form.reset();
+        const data = await sendForm("message", "Message de contact", "/api/messages", body, form, ok, err);
+        if (data) { ok.classList.add("show"); form.reset(); }
       } catch (e2) {
         err.textContent = e2.message; err.classList.add("show");
       }
@@ -174,16 +202,23 @@
         telephone: document.getElementById("enroll-telephone").value
       };
       try {
-        const r = await fetch(`/api/formations/${formationId}/inscriptions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || "Échec de l'inscription.");
-        ok.classList.add("show");
-        form.reset();
+        const data = await sendForm("inscription", "Inscription à une formation", `/api/formations/${encodeURIComponent(formationId)}/inscriptions`, body, form, ok, err);
+        if (data) { ok.classList.add("show"); form.reset(); }
       } catch (e2) {
         err.textContent = e2.message; err.classList.add("show");
       }
     });
   }
+
+  // Envoi différé confirmé par le serveur (file hors-ligne) : on retire la mention "en attente" et on affiche la confirmation.
+  window.addEventListener("okim:synced", (ev) => {
+    const kind = ev.detail && ev.detail.item && ev.detail.item.kind;
+    const map = { message: "contact-success", inscription: "enroll-success" };
+    if (!map[kind]) return;
+    document.querySelectorAll(".okim-notice").forEach((n) => n.remove());
+    const el = document.getElementById(map[kind]);
+    if (el) el.classList.add("show");
+  });
 
   document.addEventListener("DOMContentLoaded", () => {
     applySettings().catch(() => {});
