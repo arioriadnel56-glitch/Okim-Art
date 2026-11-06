@@ -7,6 +7,9 @@ const express = require("express");
 const cookieParser = require("cookie-parser");
 
 const { initDb, ensureFirstAdmin } = require("./db");
+const { compressJson } = require("./utils/compress");
+const { scheduleSnapshot, ensureSnapshotOnce, snapshotUrl } = require("./utils/snapshot");
+const { purgeOldIdempotencyKeys } = require("./utils/idempotency");
 const { requireAdmin, requireOwner, requireSection } = require("./middleware/auth");
 const { purgeExpiredTrash } = require("./utils/trash");
 const { sweepExpiredSessions } = require("./utils/gallery");
@@ -44,12 +47,29 @@ const seoRoutes = require("./routes/seo");
 const app = express();
 
 // 👉 Configuration indispensable pour Render (proxy inverse et rate limit)
-app.set("trust proxy", 1);
+// Nombre de proxys de confiance devant l'application. 1 = répartiteur Render seul.
+// Si le site statique Render relaie /api/* (voir render.yaml), il y a un proxy de plus :
+// vérifiez sur /api/health que "client_ip" est bien VOTRE adresse, sinon réglez
+// TRUST_PROXY_HOPS=2 — les limiteurs de tentatives (connexion, PIN) en dépendent.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS) || 1);
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 app.disable("x-powered-by");
+
+// ---------- Santé : répond IMMÉDIATEMENT, sans toucher à la base ----------
+// Utilisé UNIQUEMENT à la demande par le frontend (réveil de Render quand une
+// fonctionnalité serveur est sollicitée) — jamais par un ping périodique.
+// Déclaré avant tout le reste pour que le réveil soit le plus court possible.
+let dbReady = false;
+let dbFailed = null;
+app.get("/api/health", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, service: "okim-art", ready: dbReady, uptime: Math.round(process.uptime()), client_ip: req.ip });
+});
+
+app.use(compressJson());
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
@@ -71,13 +91,60 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------- API : jamais mise en cache par défaut (sessions, données privées) ----------
+// Les routes publiques en lecture seule (routes/public.js) redéfinissent
+// explicitement un cache court. Évite toute fuite de données entre
+// utilisateurs via un cache partagé (CDN, proxy).
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
+// ---------- Attend la base avant toute route /api (sauf /api/health, déjà répondue) ----------
+// Le serveur écoute tout de suite (donc Render considère le service "up" et
+// /api/health répond), pendant que la base s'initialise en arrière-plan.
+let readyResolve;
+const readyPromise = new Promise((r) => { readyResolve = r; });
+app.use("/api", async (req, res, next) => {
+  if (!dbReady) {
+    await Promise.race([readyPromise, new Promise((r) => setTimeout(r, 20000))]);
+  }
+  if (dbFailed) return res.status(503).set("Retry-After", "5").json({ error: "Service en cours de démarrage, réessayez dans un instant." });
+  if (!dbReady) return res.status(503).set("Retry-After", "3").json({ error: "Service en cours de démarrage, réessayez dans un instant." });
+  next();
+});
+
+// ---------- Instantané public : republié après toute modification admin réussie ----------
+app.use("/api/admin", (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    res.on("finish", () => { if (res.statusCode < 400) scheduleSnapshot(); });
+  }
+  next();
+});
+
 // ---------- SEO : robots.txt + sitemap.xml générés dynamiquement (voir routes/seo.js) ----------
 // Placé AVANT express.static pour ne jamais pouvoir être masqué par un
 // éventuel fichier statique du même nom.
 app.use(seoRoutes);
 
 // ---------- Fichiers statiques (frontend public existant, jamais modifié visuellement) ----------
-app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
+// Cache : HTML/CSS/JS revalidés (ETag) pour que les mises à jour soient immédiates,
+// images et polices conservées longtemps. (En production, ces fichiers sont servis
+// par le site statique Render + CDN — voir render.yaml ; ceci sert le dev local
+// et le mode "un seul service".)
+app.use(express.static(PUBLIC_DIR, {
+  extensions: ["html"],
+  setHeaders(res, filePath) {
+    if (/\.(?:jpe?g|png|webp|avif|svg|ico|woff2?)$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "public, max-age=604800");
+    } else if (/sw\.js$/.test(filePath)) {
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Service-Worker-Allowed", "/");
+    } else {
+      res.setHeader("Cache-Control", "no-cache");
+    }
+  }
+}));
 
 // ---------- Fichiers uploadés publics (photos, aperçus, logo...) ----------
 // Servis depuis PERSIST_ROOT/public (voir server/utils/upload.js), racine
@@ -145,18 +212,50 @@ app.use((err, req, res, next) => {
 // à l'ancienne base SQLite en fichier local) : on attend que tout soit prêt
 // avant d'accepter des requêtes HTTP.
 async function main() {
-  await initDb();
-
-  app.listen(PORT, async () => {
+  // On écoute d'abord : /api/health répond tout de suite, la base s'initialise
+  // en parallèle (voir portier "dbReady" ci-dessus). Avant : app.listen n'était
+  // appelé qu'après initDb() => tout le schéma/amorçage retardait le réveil.
+  const server = app.listen(PORT, () => {
     console.log(`\nOKIM ART — serveur démarré sur http://localhost:${PORT}`);
     console.log(`Site public : http://localhost:${PORT}/`);
     console.log(`Espace admin : http://localhost:${PORT}/admin/`);
+  });
+  // Doit dépasser le délai d'inactivité du répartiteur de charge Render (≈ 60 s),
+  // sinon des 502 sporadiques apparaissent sur des connexions réutilisées.
+  server.keepAliveTimeout = 65 * 1000;
+  server.headersTimeout = 66 * 1000;
+  server.requestTimeout = 0; // les uploads/téléchargements lourds (ZIP, vidéos) ne doivent pas être coupés
 
-    try {
-      const created = await ensureFirstAdmin();
-      if (created) {
-        const fs = require("fs");
-        const msg = `
+  // Arrêt propre (Render envoie SIGTERM à chaque mise en veille / déploiement).
+  let closing = false;
+  const shutdown = (sig) => {
+    if (closing) return;
+    closing = true;
+    console.log(`[arrêt] ${sig} reçu — fermeture propre…`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 10000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  try {
+    const t0 = Date.now();
+    const info = await initDb();
+    console.log(`[db] prête en ${Date.now() - t0} ms${info && info.skipped ? " (schéma déjà à jour)" : " (schéma initialisé)"}`);
+    dbReady = true;
+    readyResolve();
+  } catch (err) {
+    dbFailed = err;
+    readyResolve();
+    console.error("[Erreur critique au démarrage]", err);
+    process.exit(1);
+  }
+
+  try {
+    const created = await ensureFirstAdmin();
+    if (created) {
+      const fs = require("fs");
+      const msg = `
 ================================================================
  COMPTE ADMINISTRATEUR CRÉÉ (à noter puis à SUPPRIMER ce fichier)
 ================================================================
@@ -168,31 +267,37 @@ async function main() {
  (Paramètres → Sécurité), puis supprimez ce fichier.
 ================================================================
 `;
-        console.log(msg);
-        fs.writeFileSync(path.join(__dirname, "..", "ADMIN-IDENTIFIANTS.txt"), msg.trim() + "\n");
-      }
-    } catch (e) {
-      console.error("[démarrage] Échec de la création/vérification du premier admin :", e);
+      console.log(msg);
+      fs.writeFileSync(path.join(__dirname, "..", "ADMIN-IDENTIFIANTS.txt"), msg.trim() + "\n");
     }
+  } catch (e) {
+    console.error("[démarrage] Échec de la création/vérification du premier admin :", e);
+  }
 
-    // Purge automatique de la corbeille (30 jours) : au démarrage, puis toutes les heures.
-    purgeExpiredTrash().catch((e) => console.error("[purgeExpiredTrash]", e));
-    setInterval(() => purgeExpiredTrash().catch((e) => console.error("[purgeExpiredTrash]", e)), 60 * 60 * 1000);
+  // Tâches d'entretien : décalées de 30 s après le démarrage pour ne pas
+  // concurrencer la première requête d'un visiteur qui vient de réveiller le
+  // serveur ; puis toutes les heures TANT QUE le serveur est éveillé. Ce n'est
+  // pas un ping : rien ne réveille Render, ces tâches ne tournent que si le
+  // service est déjà actif.
+  const HOUR = 60 * 60 * 1000;
+  const guarded = (name, fn) => () => fn().catch((e) => console.error(`[${name}]`, e));
+  const jobs = [
+    guarded("purgeExpiredTrash", purgeExpiredTrash),
+    guarded("sweepExpiredSessions", sweepExpiredSessions),
+    guarded("sweepExpiredLicenses", sweepExpiredLicenses),
+    guarded("sweepExpiringLicenses", sweepExpiringLicenses),
+    guarded("purgeOldIdempotencyKeys", purgeOldIdempotencyKeys)
+  ];
+  setTimeout(() => {
+    jobs.forEach((j) => j());
+    setInterval(() => jobs.forEach((j) => j()), HOUR);
+  }, 30 * 1000).unref();
 
-    // Bascule les séances photo dont la rétention gratuite est dépassée
-    // vers le statut "archived" : au démarrage, puis toutes les heures.
-    sweepExpiredSessions().catch((e) => console.error("[sweepExpiredSessions]", e));
-    setInterval(() => sweepExpiredSessions().catch((e) => console.error("[sweepExpiredSessions]", e)), 60 * 60 * 1000);
-
-    // Bascule les licences logicielles dont la date d'expiration est
-    // dépassée vers le statut "expiree" : au démarrage, puis toutes les heures.
-    sweepExpiredLicenses().catch((e) => console.error("[sweepExpiredLicenses]", e));
-    setInterval(() => sweepExpiredLicenses().catch((e) => console.error("[sweepExpiredLicenses]", e)), 60 * 60 * 1000);
-
-    // Notifications "licence bientôt expirée" (client + e-mail) : au démarrage, puis toutes les heures.
-    sweepExpiringLicenses().catch((e) => console.error("[sweepExpiringLicenses]", e));
-    setInterval(() => sweepExpiringLicenses().catch((e) => console.error("[sweepExpiringLicenses]", e)), 60 * 60 * 1000);
-  });
+  // Instantané public pour le CDN : publié une seule fois s'il n'existe pas encore,
+  // ensuite après chaque modification faite dans l'administration.
+  setTimeout(() => { ensureSnapshotOnce(); }, 45 * 1000).unref();
+  const url = snapshotUrl();
+  if (url) console.log(`[snapshot] URL publique de l'instantané : ${url}`);
 }
 
 main().catch((err) => {
