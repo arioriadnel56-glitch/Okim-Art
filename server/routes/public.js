@@ -5,159 +5,83 @@ const express = require("express");
 const { db } = require("../db");
 const { fireEvent } = require("../utils/notify");
 const { notifyAdminInApp } = require("../utils/notifications");
+const data = require("../utils/publicData");
+const { idempotent } = require("../utils/idempotency");
+const { buildSnapshot } = require("../utils/snapshot");
 
 const router = express.Router();
 
-// Seules ces clés sont exposées au site public. Toute future clé "sensible"
-// (secrets, clés privées...) doit vivre dans secure_settings et NE JAMAIS
-// être ajoutée ici, quelle que soit la façon dont on lit la table settings.
-const PUBLIC_SETTINGS_KEYS = [
-  "site_nom", "slogan", "bio", "photographe_nom", "photographe_photo", "ville", "site_url",
-  "telephone_1", "telephone_2", "whatsapp", "whatsapp_message", "email",
-  "instagram", "facebook", "seo_title", "seo_description", "logo",
-  "kkiapay_enabled", "kkiapay_public_key", "kkiapay_sandbox"
-];
+// Lecture publique : cache court côté navigateur/CDN (les données changent
+// rarement). Le frontend lit surtout l'instantané CDN (utils/snapshot.js) ;
+// ces routes servent de repli et de source "live" quand le backend est réveillé.
+// Validation / nettoyage des champs saisis par des visiteurs anonymes.
+const str = (v, max) => String(v == null ? "" : v).trim().slice(0, max);
+const isEmail = (v) => /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/.test(v);
+const escHtml = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-router.get("/settings", async (req, res) => {
-  const placeholders = PUBLIC_SETTINGS_KEYS.map(() => "?").join(",");
-  const rows = await db.prepare(`SELECT cle, valeur FROM settings WHERE cle IN (${placeholders})`).all(...PUBLIC_SETTINGS_KEYS);
-  const settings = {};
-  rows.forEach(r => { settings[r.cle] = r.valeur; });
-  res.json({ settings });
-});
+function publicCache(res) { res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300"); }
 
-router.get("/categories", async (req, res) => {
-  const categories = await db.prepare("SELECT id, nom, slug, description FROM categories ORDER BY nom").all();
-  res.json({ categories });
-});
-
-router.get("/photos", async (req, res) => {
-  const { category, featured } = req.query;
-  let sql = `
-    SELECT p.id, p.titre, p.description, p.miniature, p.a_la_une, p.type, c.slug AS categorie, c.nom AS categorie_nom
-    FROM photos p LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.statut = 'publie'`;
-  const params = [];
-  if (category) { sql += " AND c.slug = ?"; params.push(category); }
-  if (featured === "1") { sql += " AND p.a_la_une = 1"; }
-  sql += " ORDER BY p.ordre ASC, p.created_at DESC";
-  const photos = await db.prepare(sql).all(...params);
-  res.json({ photos });
-});
-
-router.get("/services", async (req, res) => {
-  const services = await db.prepare("SELECT id, titre, description, image, prix FROM services WHERE statut = 'actif' ORDER BY ordre ASC, created_at ASC").all();
-  res.json({ services });
-});
-
-router.get("/formations", async (req, res) => {
-  const formations = await db.prepare(`
-    SELECT id, titre, description, programme, image, prix, duree, date_session, lieu, places
-    FROM formations WHERE statut = 'actif' ORDER BY ordre ASC, created_at ASC
-  `).all();
-  res.json({ formations });
-});
-
-router.get("/products", async (req, res) => {
-  // Seules les photos (type='photo') sortent ici, comme avant l'ajout du
-  // module Logiciels — la boutique "Outils & Logiciels" a ses propres
-  // routes ci-dessous (/software, /software/:slug), la tarification d'un
-  // logiciel se faisant par formules (plans) et non par un prix unique.
-  const products = await db.prepare(`
-    SELECT id, titre, description, prix, licence, apercu
-    FROM products WHERE statut = 'actif' AND type = 'photo' ORDER BY created_at DESC
-  `).all();
-  res.json({ products });
-});
+router.get("/settings", async (req, res) => { publicCache(res); res.json({ settings: await data.getSettings() }); });
+router.get("/categories", async (req, res) => { publicCache(res); res.json({ categories: await data.getCategories() }); });
+// ?limit= (défaut 200, max 500) et ?offset= : pagination optionnelle.
+router.get("/photos", async (req, res) => { publicCache(res); res.json({ photos: await data.getPhotos(req.query) }); });
+router.get("/services", async (req, res) => { publicCache(res); res.json({ services: await data.getServices() }); });
+router.get("/formations", async (req, res) => { publicCache(res); res.json({ formations: await data.getFormations() }); });
+router.get("/products", async (req, res) => { publicCache(res); res.json({ products: await data.getProducts() }); });
 
 // ---------- Boutique "Outils & Logiciels" ----------
-router.get("/software", async (req, res) => {
-  const { category, licence, badge, sort } = req.query;
-  let sql = `
-    SELECT p.id, p.titre AS nom, p.description, sw.slogan, sw.plateforme, sw.licence_type,
-           sw.badge, sw.popularite, sw.captures, p.apercu, c.slug AS categorie, c.nom AS categorie_nom,
-           (SELECT MIN(prix) FROM software_plans WHERE software_id = sw.id AND statut = 'actif') AS prix_a_partir_de
-    FROM products p
-    JOIN software_products sw ON sw.product_id = p.id
-    LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.statut = 'actif'`;
-  const params = [];
-  if (category) { sql += " AND c.slug = ?"; params.push(category); }
-  if (licence) { sql += " AND sw.licence_type = ?"; params.push(licence); }
-  if (badge) { sql += " AND sw.badge = ?"; params.push(badge); }
-  sql += sort === "prix_asc" ? " ORDER BY prix_a_partir_de ASC NULLS LAST"
-    : sort === "prix_desc" ? " ORDER BY prix_a_partir_de DESC NULLS LAST"
-    : sort === "populaire" ? " ORDER BY sw.popularite DESC"
-    : " ORDER BY p.created_at DESC";
-  const software = await db.prepare(sql).all(...params);
-  res.json({ software: software.map((s) => ({ ...s, captures: JSON.parse(s.captures || "[]") })) });
-});
-
+router.get("/software", async (req, res) => { publicCache(res); res.json({ software: await data.getSoftwareList(req.query) }); });
 router.get("/software/:productId", async (req, res) => {
-  const product = await db.prepare("SELECT * FROM products WHERE id = ? AND statut = 'actif' AND type = 'logiciel'").get(req.params.productId);
-  if (!product) return res.status(404).json({ error: "Logiciel introuvable." });
-  const software = await db.prepare("SELECT * FROM software_products WHERE product_id = ?").get(product.id);
+  const software = await data.getSoftwareDetail(req.params.productId);
   if (!software) return res.status(404).json({ error: "Logiciel introuvable." });
-  const plans = await db.prepare("SELECT * FROM software_plans WHERE software_id = ? AND statut = 'actif' ORDER BY ordre ASC, prix ASC").all(software.id);
-  const lastVersion = await db.prepare("SELECT version, notes, published_at FROM software_versions WHERE software_id = ? ORDER BY published_at DESC LIMIT 1").get(software.id);
-  res.json({
-    software: {
-      ...software,
-      captures: JSON.parse(software.captures || "[]"),
-      titre: product.titre,
-      description: product.description,
-      apercu: product.apercu,
-      plans: plans.map((p) => ({ ...p, fonctionnalites: JSON.parse(p.fonctionnalites || "[]") })),
-      derniere_version: lastVersion || null
-    }
-  });
+  publicCache(res);
+  res.json({ software });
 });
 
-router.post("/formations/:id/inscriptions", async (req, res) => {
-  const { nom, email, telephone } = req.body || {};
+// Instantané complet des données publiques (même contenu que le fichier CDN).
+router.get("/snapshot", async (req, res) => { publicCache(res); res.json(await buildSnapshot()); });
+
+router.post("/formations/:id/inscriptions", idempotent("inscription", async (req, res) => {
+  const b = req.body || {};
+  const nom = str(b.nom, 120), email = str(b.email, 254).toLowerCase(), telephone = str(b.telephone, 40);
   if (!nom || !email) return res.status(400).json({ error: "Nom et email requis." });
+  if (!isEmail(email)) return res.status(400).json({ error: "Adresse e-mail invalide." });
   const formation = await db.prepare("SELECT id, titre FROM formations WHERE id = ? AND statut = 'actif'").get(req.params.id);
   if (!formation) return res.status(404).json({ error: "Formation introuvable." });
   await db.prepare("INSERT INTO inscriptions_formation (formation_id, nom, email, telephone) VALUES (?,?,?,?)")
-    .run(formation.id, nom, email, telephone || "");
+    .run(formation.id, nom, email, telephone);
 
   fireEvent("formation.inscription.new", {
     subject: `OKIM ART — Nouvelle inscription : ${formation.titre}`,
-    html: `<p><strong>${nom}</strong> (${email}${telephone ? ", " + telephone : ""}) vient de s'inscrire à la formation <strong>${formation.titre}</strong>.</p>`,
+    html: `<p><strong>${escHtml(nom)}</strong> (${escHtml(email)}${telephone ? ", " + escHtml(telephone) : ""}) vient de s'inscrire à la formation <strong>${escHtml(formation.titre)}</strong>.</p>`,
     payload: { formation_id: formation.id, formation_titre: formation.titre, nom, email, telephone }
   });
   notifyAdminInApp("inscription_new", `Nouvelle inscription — ${formation.titre}`, `${nom} (${email})`, "#formations");
 
   res.json({ ok: true });
-});
+}));
 
-router.post("/messages", async (req, res) => {
-  const { nom, email, telephone, sujet, message } = req.body || {};
+router.post("/messages", idempotent("message", async (req, res) => {
+  const b = req.body || {};
+  const nom = str(b.nom, 120), email = str(b.email, 254).toLowerCase(), telephone = str(b.telephone, 40);
+  const sujet = str(b.sujet, 200), message = str(b.message, 5000);
   if (!nom || !email || !message) return res.status(400).json({ error: "Nom, email et message requis." });
+  if (!isEmail(email)) return res.status(400).json({ error: "Adresse e-mail invalide." });
   await db.prepare("INSERT INTO messages (nom, email, telephone, sujet, message) VALUES (?,?,?,?,?)")
-    .run(nom, email, telephone || "", sujet || "", message);
+    .run(nom, email, telephone, sujet, message);
 
   fireEvent("message.new", {
-    subject: `OKIM ART — Nouveau message de ${nom}${sujet ? " : " + sujet : ""}`,
-    html: `<p><strong>${nom}</strong> (${email}${telephone ? ", " + telephone : ""}) :</p><p>${message.replace(/\n/g, "<br>")}</p>`,
+    subject: `OKIM ART — Nouveau message de ${nom}${sujet ? " : " + sujet : ""}`.replace(/[\r\n]+/g, " "),
+    html: `<p><strong>${escHtml(nom)}</strong> (${escHtml(email)}${telephone ? ", " + escHtml(telephone) : ""}) :</p><p>${escHtml(message).replace(/\n/g, "<br>")}</p>`,
     payload: { nom, email, telephone, sujet, message }
   });
   notifyAdminInApp("message_new", `Nouveau message — ${nom}`, sujet || message.slice(0, 80), "#messages");
 
   res.json({ ok: true });
-});
+}));
 
-// Témoignages publiés — c'est la SEULE route qui expose des témoignages
-// sans authentification, et elle ne renvoie jamais que statut='publie'
-// (jamais un témoignage en attente de modération, jamais l'email du client).
-router.get("/testimonials", async (req, res) => {
-  const testimonials = await db.prepare(`
-    SELECT id, nom, texte, note, created_at FROM testimonials
-    WHERE statut = 'publie'
-    ORDER BY created_at DESC
-    LIMIT 30
-  `).all();
-  res.json({ testimonials });
-});
+// Témoignages publiés — SEULE route sans authentification exposant des témoignages ;
+// jamais que statut='publie', jamais l'email du client (voir publicData.js).
+router.get("/testimonials", async (req, res) => { publicCache(res); res.json({ testimonials: await data.getTestimonials() }); });
 
 module.exports = router;
