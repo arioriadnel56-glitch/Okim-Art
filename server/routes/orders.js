@@ -1,85 +1,119 @@
 // ============================================================
-// orders.js — création de commande (panier -> checkout), public
+// orders.js (utils) — logique partagée de confirmation de commande
 // ============================================================
-const express = require("express");
-const { nanoid } = require("nanoid");
 const { db } = require("../db");
-const { requireClient } = require("../middleware/auth");
+const { createDownloadToken } = require("./tokens");
+const { sendMail, fireEvent } = require("./notify");
+const { issueLicensesForOrder } = require("./licenses");
+const { notifyAdminInApp, notifyClientInApp } = require("./notifications");
 
-const router = express.Router();
+const PAID_STATUTS = new Set(["payee", "livree"]);
 
-function generateNumero() {
-  const d = new Date();
-  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
-  return `OKA-${stamp}-${nanoid(6).toUpperCase()}`;
+async function getSiteUrl() {
+  const row = await db.prepare("SELECT valeur FROM settings WHERE cle = 'site_url'").get();
+  return (row && row.valeur) ? row.valeur.replace(/\/$/, "") : "";
 }
 
-// Le montant est TOUJOURS recalculé côté serveur à partir des prix réels en
-// base — on ne fait jamais confiance à un prix envoyé par le navigateur.
-router.post("/", async (req, res) => {
-  const { items, client } = req.body || {};
-  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "Le panier est vide." });
-  if (!client?.nom || !client?.email) return res.status(400).json({ error: "Nom et email requis." });
+async function downloadEmailHtml(order, tokens, licenses = []) {
+  const siteUrl = await getSiteUrl();
+  const links = tokens.map((t) => {
+    // Page statique intermédiaire : réveille le serveur avec l'animation OKIM ART, puis lance le
+    // téléchargement — le client ne tombe jamais sur l'écran d'attente de l'hébergeur depuis un e-mail.
+    const url = siteUrl ? `${siteUrl}/telecharger.html?t=${encodeURIComponent(t.token)}` : `/telecharger.html?t=${encodeURIComponent(t.token)}`;
+    return `<li style="margin-bottom:8px"><strong>${t.titre}</strong> — <a href="${url}">Télécharger</a></li>`;
+  }).join("");
+  const licenseLines = licenses.map((l) =>
+    `<li style="margin-bottom:8px">Clé de licence : <strong>${l.license_key}</strong>${l.expires_at ? ` (valable jusqu'au ${l.expires_at.slice(0, 10)})` : " (licence permanente)"}</li>`
+  ).join("");
+  const accountUrl = siteUrl ? `${siteUrl}/compte.html` : "/compte.html";
+  return `
+    <div style="font-family:sans-serif; color:#1c1a17; max-width:520px">
+      <h2 style="margin-bottom:4px">Merci pour votre achat !</h2>
+      <p>Votre commande <strong>${order.numero}</strong> (${order.montant} FCFA) est confirmée et payée.</p>
+      ${links ? `<p>Vos photographies en haute résolution sont prêtes :</p><ul>${links}</ul>` : ""}
+      ${licenseLines ? `<p>Vos licences logicielles :</p><ul>${licenseLines}</ul><p>Téléchargez vos logiciels et retrouvez vos clés à tout moment depuis votre <a href="${accountUrl}">espace client</a> (section « Mes logiciels »).</p>` : ""}
+      <p style="color:#6b6558; font-size:.85rem">Chaque lien reste valable un temps limité et un nombre limité de téléchargements. En cas de souci, contactez OKIM ART en répondant à cet e-mail.</p>
+    </div>`;
+}
 
-  let montant = 0;
-  const resolved = [];
-  for (const it of items) {
-    const p = await db.prepare("SELECT * FROM products WHERE id = ? AND statut = 'actif'").get(it.product_id);
-    if (!p) return res.status(400).json({ error: `Produit introuvable ou indisponible (id ${it.product_id}).` });
-    const qte = Math.max(1, Number(it.quantite) || 1);
+/**
+ * Marque une commande comme payée (si elle ne l'est pas déjà) et génère
+ * automatiquement les jetons de téléchargement sécurisés pour chaque
+ * article de la commande. Idempotent : si la commande est déjà payée,
+ * ne génère pas de nouveaux jetons et renvoie ceux déjà émis.
+ * Déclenche aussi, sans jamais bloquer ni faire échouer l'appelant :
+ *  - un e-mail automatique au client avec ses liens de téléchargement ;
+ *  - une notification à l'admin (e-mail + webhook générique).
+ */
+async function markOrderPaid(orderId, moyenPaiement) {
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+  if (!order) return null;
 
-    // Prix TOUJOURS recalculé côté serveur. Pour un logiciel acheté avec une
-    // formule (plan_id), c'est le prix de LA FORMULE qui fait foi — jamais
-    // p.prix (les logiciels n'ont pas de prix propre, seulement leurs plans)
-    // — et on vérifie que la formule appartient bien à CE logiciel.
-    let unitPrice = p.prix;
-    let planId = null;
-    if (it.plan_id) {
-      const plan = await db.prepare(`
-        SELECT sp.* FROM software_plans sp
-        JOIN software_products sw ON sw.id = sp.software_id
-        WHERE sp.id = ? AND sw.product_id = ? AND sp.statut = 'actif'
-      `).get(it.plan_id, it.product_id);
-      if (!plan) return res.status(400).json({ error: `Formule introuvable ou indisponible pour le produit ${it.product_id}.` });
-      unitPrice = plan.prix;
-      planId = plan.id;
-    } else {
-      const isSoftware = await db.prepare("SELECT 1 FROM software_products WHERE product_id = ?").get(it.product_id);
-      if (isSoftware) return res.status(400).json({ error: "Veuillez sélectionner une formule pour ce logiciel." });
-    }
-
-    montant += unitPrice * qte;
-    resolved.push({ product: p, quantite: qte, unitPrice, planId });
+  const alreadyPaid = PAID_STATUTS.has(order.statut);
+  if (!alreadyPaid) {
+    await db.prepare("UPDATE orders SET statut = 'payee', moyen_paiement = ? WHERE id = ?")
+      .run(moyenPaiement || order.moyen_paiement || "", order.id);
   }
 
-  // Rattachement automatique à un compte client existant si connecté (facultatif).
-  let clientId = null;
-  try {
-    const cookieToken = req.cookies?.okimart_client_token;
-    if (cookieToken) {
-      const { SECRET } = require("../middleware/auth");
-      const jwt = require("jsonwebtoken");
-      const decoded = jwt.verify(cookieToken, SECRET);
-      if (decoded.type === "client") clientId = decoded.id;
+  let tokens;
+  let licenses = [];
+  if (!alreadyPaid) {
+    const items = await db.prepare("SELECT * FROM order_items WHERE order_id = ?").all(order.id);
+    tokens = [];
+    for (const it of items) {
+      // Un article "logiciel" (product.type = 'logiciel') ne reçoit jamais
+      // de jeton de téléchargement générique : son accès passe par une
+      // licence + le téléchargement authentifié de l'espace client (voir
+      // utils/licenses.js et routes/client.js). Les autres articles
+      // (photos) gardent le comportement inchangé.
+      const product = await db.prepare("SELECT type FROM products WHERE id = ?").get(it.product_id);
+      if (product && product.type === "logiciel") continue;
+      tokens.push({
+        product_id: it.product_id,
+        titre: it.titre,
+        token: await createDownloadToken(order.id, it.product_id)
+      });
     }
-  } catch (_) { /* pas connecté, on continue en invité */ }
-
-  const numero = generateNumero();
-  const info = await db.prepare(`
-    INSERT INTO orders (numero, client_id, client_nom, client_email, client_telephone, montant, statut)
-    VALUES (?,?,?,?,?,?, 'en_attente')
-  `).run(numero, clientId, client.nom, client.email, client.telephone || "", montant);
-
-  for (const r of resolved) {
-    await db.prepare("INSERT INTO order_items (order_id, product_id, titre, prix_unitaire, quantite, plan_id) VALUES (?,?,?,?,?,?)")
-      .run(info.lastInsertRowid, r.product.id, r.product.titre, r.unitPrice, r.quantite, r.planId);
+    // Génère les licences pour tous les articles "logiciel" de cette commande.
+    licenses = await issueLicensesForOrder(order);
+  } else {
+    tokens = await db.prepare(`
+      SELECT dt.token, oi.product_id, oi.titre
+      FROM download_tokens dt JOIN order_items oi ON oi.product_id = dt.product_id AND oi.order_id = dt.order_id
+      WHERE dt.order_id = ?
+    `).all(order.id);
+    licenses = await db.prepare("SELECT * FROM licenses WHERE order_id = ?").all(order.id);
   }
 
-  res.status(201).json({
-    ok: true,
-    order: { id: info.lastInsertRowid, numero, montant, statut: "en_attente" },
-    note: "Commande enregistrée. Le paiement (mobile money / espèces / virement) est confirmé manuellement par OKIM ART, qui valide ensuite la commande depuis le tableau de bord pour débloquer le téléchargement."
-  });
-});
+  const finalOrder = await db.prepare("SELECT * FROM orders WHERE id = ?").get(order.id);
 
-module.exports = router;
+  // Notifications automatiques — uniquement au moment où la commande passe
+  // réellement à "payée" (pas à chaque relecture d'une commande déjà payée).
+  if (!alreadyPaid) {
+    downloadEmailHtml(finalOrder, tokens, licenses).then((html) => {
+      sendMail({ to: finalOrder.client_email, subject: `OKIM ART — Votre commande ${finalOrder.numero} est prête`, html }).catch(() => {});
+    }).catch(() => {});
+    fireEvent("order.paid", {
+      subject: `OKIM ART — Nouvelle commande payée (${finalOrder.numero})`,
+      html: `<p>Commande <strong>${finalOrder.numero}</strong> de ${finalOrder.client_nom} (${finalOrder.client_email}) — ${finalOrder.montant} FCFA — payée via ${finalOrder.moyen_paiement || "?"}.</p>`,
+      payload: { order_id: finalOrder.id, numero: finalOrder.numero, montant: finalOrder.montant, client_nom: finalOrder.client_nom, client_email: finalOrder.client_email, moyen_paiement: finalOrder.moyen_paiement }
+    });
+    notifyAdminInApp("order_paid", `Commande payée — ${finalOrder.numero}`,
+      `${finalOrder.client_nom} — ${finalOrder.montant} FCFA`, "#orders");
+    if (finalOrder.client_id) {
+      notifyClientInApp(finalOrder.client_id, "order_ready", `Votre commande ${finalOrder.numero} est prête`,
+        licenses.length ? "Vos licences et téléchargements sont disponibles." : "Vos téléchargements sont disponibles.",
+        "compte.html");
+    }
+    for (const l of licenses) {
+      if (l.client_id) {
+        notifyClientInApp(l.client_id, "license_created", "Votre licence logicielle est prête",
+          `Clé : ${l.license_key}`, "compte.html");
+      }
+    }
+  }
+
+  return { order: finalOrder, tokens, licenses };
+}
+
+module.exports = { markOrderPaid };
