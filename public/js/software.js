@@ -45,6 +45,7 @@
     }
 
     function load() {
+      if (window.OkimApi) OkimApi.ui.skeletonCards(grid, 6);
       var sort = document.getElementById("sw-sort").value;
       var url = "/api/software" + (sort ? "?sort=" + encodeURIComponent(sort) : "");
       fetch(url).then(function (r) { return r.json(); }).then(function (data) {
@@ -61,12 +62,14 @@
         });
         applyFilters();
       }).catch(function () {
+        grid.innerHTML = "";
         document.getElementById("sw-empty").style.display = "block";
       });
     }
 
     ["sw-search", "sw-cat", "sw-licence"].forEach(function (id) {
-      document.getElementById(id).addEventListener("input", applyFilters);
+      // Recherche : anti-rebond 200 ms (évite un re-rendu complet à chaque frappe)
+      document.getElementById(id).addEventListener("input", window.OkimApi ? OkimApi.ui.debounce(applyFilters, 200) : applyFilters);
       document.getElementById(id).addEventListener("change", applyFilters);
     });
     document.getElementById("sw-sort").addEventListener("change", load);
