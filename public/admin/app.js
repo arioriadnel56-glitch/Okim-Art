@@ -1729,7 +1729,9 @@
       await loadAdminProfile();
       await Promise.all([loadPhotos(), loadCategories(), loadServices(), loadFormations(), loadProducts(), loadOrders(), loadMessages(), loadTestimonials(), loadTrash(), loadSessions(), loadSettings(), loadKkiapay(), loadGeniuspay(), loadNotify(), loadAssistant(), loadAdmins(), loadSoftwareList(), loadLicenses()]);
       await loadSoftwareCategorySelect();
-      setInterval(() => loadAdminNotifications().catch(() => {}), 45000);
+      // Pas d'interrogation quand l'onglet est masqué ou hors connexion : un onglet admin oublié
+      // ne doit pas maintenir le serveur éveillé (et consommer les heures gratuites) pour rien.
+      setInterval(() => { if (!document.hidden && navigator.onLine !== false) loadAdminNotifications().catch(() => {}); }, 45000);
     } catch (err) {
       console.error(err);
     }
