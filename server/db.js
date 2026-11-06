@@ -23,9 +23,16 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSL === "false" ? false : { rejectUnauthorized: false },
-  max: 15, // Limite raisonnable pour éviter la saturation sous charge
+  // Render Free = 512 Mo de RAM et un pooleur Supabase (mode session) dont le
+  // nombre de connexions est limité : 10 suffit largement pour une instance.
+  max: Number(process.env.PG_POOL_MAX) || 10,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000
+  connectionTimeoutMillis: 8000, // 1re connexion TLS après un réveil : 5 s était juste
+  keepAlive: true,
+  // Aucune requête ne doit pouvoir bloquer indéfiniment une instance gratuite.
+  statement_timeout: 20000,
+  query_timeout: 25000,
+  application_name: "okim-art"
 });
 
 pool.on("error", (err) => {
@@ -40,7 +47,7 @@ function convertPlaceholders(sql) {
   return sql.replace(/\?/g, () => `$${++i}`);
 }
 
-const NO_ID_TABLES = new Set(["settings", "secure_settings"]);
+const NO_ID_TABLES = new Set(["settings", "secure_settings", "idempotency_keys"]);
 
 function needsReturningId(sql) {
   const m = sql.match(/^\s*insert\s+into\s+["`]?(\w+)["`]?/i);
@@ -430,7 +437,50 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_admin ON notifications(audience, lu, created_at) WHERE audience = 'admin';
 CREATE INDEX IF NOT EXISTS idx_notifications_client ON notifications(client_id, lu, created_at);
+
+-- Clés d'idempotence (commandes, messages, inscriptions) : évite les doublons
+-- lors d'un renvoi (timeout, réveil du serveur, file hors-ligne). Table purement additive.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'in_progress',
+  status_code INTEGER,
+  response_json TEXT,
+  created_at TEXT NOT NULL DEFAULT ${NOW_EXPR}
+);
 `;
+
+// Index ajoutés pour les requêtes fréquentes (aucune donnée modifiée).
+// Exécutés APRÈS les migrations, car certains portent sur des colonnes ajoutées par elles.
+const INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS idx_photos_public ON photos(statut, ordre, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_photos_category ON photos(category_id);
+CREATE INDEX IF NOT EXISTS idx_products_list ON products(statut, type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_services_list ON services(statut, ordre);
+CREATE INDEX IF NOT EXISTS idx_formations_list ON formations(statut, ordre);
+CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_id);
+CREATE INDEX IF NOT EXISTS idx_orders_statut_created ON orders(statut, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_download_tokens_order ON download_tokens(order_id);
+CREATE INDEX IF NOT EXISTS idx_session_photos_session ON session_photos(session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_photo_status ON sessions_photo(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_photo_client ON sessions_photo(client_id);
+CREATE INDEX IF NOT EXISTS idx_software_plans_sw ON software_plans(software_id, statut);
+CREATE INDEX IF NOT EXISTS idx_software_versions_sw ON software_versions(software_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_licenses_client ON licenses(client_id);
+CREATE INDEX IF NOT EXISTS idx_licenses_order ON licenses(order_id);
+CREATE INDEX IF NOT EXISTS idx_licenses_status_exp ON licenses(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_testimonials_public ON testimonials(statut, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trash_purge ON trash(purge_at);
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+`;
+
+// Version du schéma/amorçage : tant qu'elle est inchangée en base, le démarrage
+// SAUTE le schéma, les migrations et l'amorçage (≈ 60 requêtes vers Supabase
+// à chaque réveil de Render). Incrémentez-la quand vous ajoutez une migration
+// ou un réglage par défaut dans ce fichier.
+const SCHEMA_VERSION = "2026-11-perf-1";
 
 // ---------------------------------------------------------------
 // Migrations sécurisées
@@ -527,9 +577,22 @@ async function seedDefaults() {
 }
 
 async function initDb() {
+  // Démarrage rapide : si le schéma est déjà à jour, on ne refait rien.
+  try {
+    const { rows } = await pool.query("SELECT to_regclass('public.secure_settings') AS t");
+    if (rows[0] && rows[0].t) {
+      const v = await pool.query("SELECT valeur FROM secure_settings WHERE cle = 'schema_version'");
+      if (v.rows[0] && v.rows[0].valeur === SCHEMA_VERSION) return { skipped: true };
+    }
+  } catch (e) {
+    console.warn("[db] vérification de version impossible, initialisation complète :", e.message);
+  }
   await pool.query(SCHEMA_SQL);
   await runMigrations();
+  await pool.query(INDEX_SQL);
   await seedDefaults();
+  await setSecureSetting("schema_version", SCHEMA_VERSION);
+  return { skipped: false };
 }
 
 async function getSecureSetting(cle) {
