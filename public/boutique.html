@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="/js/okim-core.js"></script>
 <title>Boutique — OKIM ART</title>
 <link rel="icon" href="/img/brand/icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="icon" href="/img/brand/icons/favicon-16.png" sizes="16x16" type="image/png">
@@ -12,7 +13,8 @@
 <meta name="description" content="Achetez des photographies originales OKIM ART en haute résolution, livraison numérique sécurisée après paiement.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="css/shop.css">
 <link rel="stylesheet" href="css/okimbox.css">
@@ -80,13 +82,14 @@
   var FCFA = new Intl.NumberFormat("fr-FR");
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 
+  OkimApi.ui.skeletonCards(document.getElementById("shop-grid"), 6);
   fetch("/api/products").then(function(r){ return r.json(); }).then(function(data){
     var products = data.products || [];
     var grid = document.getElementById("shop-grid");
     if(!products.length){ document.getElementById("shop-empty").style.display = "block"; return; }
     grid.innerHTML = products.map(function(p){
       return '<div class="product-card">' +
-        '<div class="thumb"><img src="'+esc(p.apercu)+'" alt="'+esc(p.titre)+'"></div>' +
+        '<div class="thumb"><img src="'+esc(p.apercu)+'" alt="'+esc(p.titre)+'" loading="lazy" decoding="async"></div>' +
         '<div class="body">' +
           '<h3>'+esc(p.titre)+'</h3>' +
           '<p>'+esc(p.description||"")+'</p>' +
@@ -103,6 +106,7 @@
       });
     });
   }).catch(function(){
+    document.getElementById("shop-grid").innerHTML = "";
     document.getElementById("shop-empty").style.display = "block";
   });
 
