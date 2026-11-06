@@ -61,3 +61,71 @@ services:
         sync: false
       - key: CLOUDINARY_VIDEO_FOLDER
         value: okimart/videos
+
+      # Un proxy supplémentaire (le site statique) se trouve devant l'API : voir
+      # server/server.js. Vérifiez sur /api/health que "client_ip" est bien votre IP.
+      - key: TRUST_PROXY_HOPS
+        value: "2"
+
+  # ------------------------------------------------------------------
+  # SITE STATIQUE (vitrine + pages + admin) — toujours éveillé, gratuit,
+  # servi par le CDN Render : n'utilise AUCUNE des 750 h du service web.
+  # Un visiteur ouvre donc toujours la vitrine instantanément ; le backend
+  # n'est réveillé (par okim-core.js) que si une fonctionnalité serveur est
+  # utilisée. /api/* est relayé vers le backend (même origine => cookies de
+  # session inchangés, aucun CORS à configurer).
+  #
+  # ⚠ Remplacez "okim-art-platform.onrender.com" ci-dessous si l'URL réelle
+  # de votre service web est différente (Dashboard Render > service web).
+  # ------------------------------------------------------------------
+  - type: web
+    name: okim-art-web
+    runtime: static
+    buildCommand: node scripts/build-static.js
+    staticPublishPath: ./dist
+    envVars:
+      # URL CDN de l'instantané public, affichée dans les logs du backend
+      # ("[snapshot] URL publique de l'instantané : ..."). Laisser vide au
+      # premier déploiement, puis la renseigner et redéployer le site statique.
+      - key: OKIM_SNAPSHOT_URL
+        sync: false
+      - key: SITE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://okim-art-platform.onrender.com/api/*
+      - type: rewrite
+        source: /uploads/*
+        destination: https://okim-art-platform.onrender.com/uploads/*
+      - type: rewrite
+        source: /gallery/*
+        destination: /gallery.html
+    headers:
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+      - path: /*.html
+        name: Cache-Control
+        value: no-cache
+      - path: /js/*
+        name: Cache-Control
+        value: no-cache
+      - path: /css/*
+        name: Cache-Control
+        value: no-cache
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=604800
+      - path: /img/*
+        name: Cache-Control
+        value: public, max-age=604800
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
